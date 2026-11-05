@@ -49,10 +49,12 @@ def test_transformer_fused_structure():
     blk, _, sh = make_transformer_block(16, 32, 2, 64)
     f = tf.compile(blk, **sh)
     c = f.optimized.op_counts()
-    # q,k,v,o,ff1,ff2 + 2 attention matmuls; the scores matmul fuses the scale,
-    # att@v has no consumer to fuse
-    assert c["fused_matmul"] == 7 and c["matmul"] == 1
+    # q,k,v,o,ff1,ff2 + 2 attention matmuls (scores fuse the scale; both read
+    # their head-split operands through strided views)
+    assert c["fused_matmul"] == 8 and "matmul" not in c
     assert c.get("fused_elementwise", 0) == 0
+    # only the head-merge transpose after att@v is still materialised
+    assert c["transpose"] == 1
     assert not any(op in c for op in ("add", "mul", "gelu"))
     unf = tf.compile(blk, pipeline="unfused", **sh)
     assert unf.module.gen.plan.ws_size > f.module.gen.plan.ws_size

@@ -43,8 +43,9 @@ def matmul_epilogue_fusion(g: Graph) -> bool:
         if not chain:
             continue
         program, ext = build_program(chain, anchor=m)
-        fused = Node("fused_matmul", [m.inputs[0], m.inputs[1]] + ext,
-                     {"epilogue": program})
+        attrs = {k: m.attrs[k] for k in ("a_view", "b_view") if m.attrs.get(k) is not None}
+        attrs["epilogue"] = program
+        fused = Node("fused_matmul", [m.inputs[0], m.inputs[1]] + ext, attrs)
         assert fused.shape == chain[-1].shape
         replace[chain[-1].id] = fused
         removed.add(m.id)

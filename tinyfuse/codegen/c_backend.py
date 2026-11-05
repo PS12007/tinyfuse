@@ -21,7 +21,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from ..ir import Graph, Node
-from ..ops import ELEMENTWISE_ARITY, broadcast_strides, numel
+from ..ops import (ELEMENTWISE_ARITY, broadcast_strides, contiguous_strides,
+                   matmul_operand_shapes, numel)
 from .memory import MemoryPlan, plan_memory
 
 
@@ -187,6 +188,17 @@ def merge_dims(shape: Sequence[int], strides_list: Sequence[Sequence[int]]):
     return shape, strides
 
 
+def _batch_offset(strides, batch_dims) -> str:
+    """C expression for the element offset of flat batch index ``bt``."""
+    terms = []
+    rem = 1
+    for d in range(len(batch_dims) - 1, -1, -1):
+        if strides[d]:
+            terms.append(f"((bt / {rem}L) % {batch_dims[d]}L) * {strides[d]}L")
+        rem *= batch_dims[d]
+    return " + ".join(terms) if terms else "0"
+
+
 def _index(vars_, strides) -> str:
     terms = []
     for v, s in zip(vars_, strides):
@@ -293,12 +305,12 @@ class CodeGen:
         w("const int jj = j0 + p * NR;")
         w("const int wdt = TF_MIN(NR, N - jj);")
         w.open("for (int k = 0; k < kb; ++k)")
-        w("const float* restrict src = Bb + (long)(k0 + k) * N + jj;")
+        w("const float* restrict src = Bb + (long)(k0 + k) * SBK + (long)jj * SBN;")
         w.open("if (wdt == NR)")
-        w("for (int c = 0; c < NR; ++c) dst[k * NR + c] = src[c];")
+        w("for (int c = 0; c < NR; ++c) dst[k * NR + c] = src[c * SBN];")
         w.close()
         w.open("else")
-        w("for (int c = 0; c < wdt; ++c) dst[k * NR + c] = src[c];")
+        w("for (int c = 0; c < wdt; ++c) dst[k * NR + c] = src[c * SBN];")
         w("for (int c = wdt; c < NR; ++c) dst[k * NR + c] = 0.0f;")
         w.close()
         w.close()
@@ -313,8 +325,8 @@ class CodeGen:
         w("const int hgt = TF_MIN(MR, M - ii);")
         w.open("for (int r = 0; r < MR; ++r)")
         w.open("if (r < hgt)")
-        w("const float* restrict src = Ab + (long)(ii + r) * K + k0;")
-        w("for (int k = 0; k < kb; ++k) dst[k * MR + r] = src[k];")
+        w("const float* restrict src = Ab + (long)(ii + r) * SAM + (long)k0 * SAK;")
+        w("for (int k = 0; k < kb; ++k) dst[k * MR + r] = src[k * SAK];")
         w.close()
         w.open("else")
         w("for (int k = 0; k < kb; ++k) dst[k * MR + r] = 0.0f;")
@@ -396,11 +408,18 @@ class CodeGen:
         extra = n.inputs[2:]
         epilogue = n.attrs.get("epilogue") if n.op == "fused_matmul" else None
         out = n.shape
-        M, K = a.shape[-2], a.shape[-1]
-        N = b.shape[-1]
+        sa, sb = matmul_operand_shapes(n)
+        a_view, b_view = n.attrs.get("a_view"), n.attrs.get("b_view")
+        a_str = a_view[1] if a_view else contiguous_strides(sa)
+        b_str = b_view[1] if b_view else contiguous_strides(sb)
+        M, K = sa[-2], sa[-1]
+        N = sb[-1]
         batch_dims = out[:-2]
         BATCH = numel(batch_dims)
-        b_stride = K * N if len(b.shape) > 2 else 0
+        SAM, SAK = a_str[-2], a_str[-1]
+        SBK, SBN = b_str[-2], b_str[-1]
+        a_batch = list(a_str[:-2])
+        b_batch = list(b_str[:-2]) if len(sb) > 2 else [0] * len(batch_dims)
         vw = self.vw
         t = clamp_tile(self.opts.tile_for(BATCH, M, N, K, epilogue_signature(n)), M, N, K, vw)
         MB, NB, KB, MR, NV = t.key()
@@ -420,6 +439,8 @@ class CodeGen:
         w.open(f"static void {name}({', '.join(params)})")
         w(f"enum {{ M = {M}, N = {N}, K = {K}, MB = {MB}, NB = {NB}, KB = {KB}, "
           f"MR = {MR}, NV = {NV}, NR = {NR}, VW = {vw} }};")
+        w(f"const long SAM = {SAM}L, SAK = {SAK}L, SBK = {SBK}L, SBN = {SBN}L;  "
+          f"/* operand strides (views) */")
         w("float* restrict Bp = scratch;")
         if par:
             # One parallel region per kernel.  Work units are (row block, B
@@ -432,17 +453,11 @@ class CodeGen:
         else:
             w("float* restrict Ap = scratch + KB * NB;")
         w.open(f"for (long bt = 0; bt < {BATCH}L; ++bt)")
-        w("const float* restrict Ab = A + bt * (long)(M * K);")
-        w(f"const float* restrict Bb = B + bt * {b_stride}L;")
+        w(f"const float* restrict Ab = A + {_batch_offset(a_batch, batch_dims)};")
+        w(f"const float* restrict Bb = B + {_batch_offset(b_batch, batch_dims)};")
         w("float* restrict Cb = C + bt * (long)(M * N);")
         for k, st in enumerate(ex_strides):
-            terms = []
-            rem = 1
-            for d in range(len(batch_dims) - 1, -1, -1):
-                if st[d]:
-                    terms.append(f"((bt / {rem}L) % {batch_dims[d]}L) * {st[d]}L")
-                rem *= batch_dims[d]
-            w(f"const float* restrict eb{k} = e{k} + {' + '.join(terms) if terms else '0'};")
+            w(f"const float* restrict eb{k} = e{k} + {_batch_offset(st[:-2], batch_dims)};")
         w("(void)Ab; (void)Bb;")
         w.open("for (int j0 = 0; j0 < N; j0 += NB)")
         w("const int nb = TF_MIN(NB, N - j0);")

@@ -71,7 +71,7 @@ Pipelines (`passes/manager.py`):
 |---|---|
 | `none` | nothing: one kernel per traced op |
 | `unfused` | constant folding → CSE → DCE |
-| `fused` | `unfused` + matmul-epilogue fusion → elementwise fusion → DCE |
+| `fused` | `unfused` + matmul-epilogue fusion → elementwise fusion → layout folding → DCE |
 
 `optimize()` runs the pipeline up to twice, stopping once a full round changes
 nothing.
@@ -107,6 +107,17 @@ nothing.
   recomputed once per element of a larger output. Multi-use values whose users
   all sit in one group (`relu(x)*exp(x)`) still fuse. Scalar constants become
   literals in the program.
+* **Layout folding** (`layout_folding.py`). Each transpose, and each reshape of
+  a contiguous view, is a strided view `(shape, strides)` of some base tensor.
+  When a matmul operand is such a chain, the matmul gets the base tensor as its
+  input plus an `a_view`/`b_view` attribute, and the packing loops read through
+  the strides. Shape inference checks that a view stays inside its base buffer,
+  and the interpreter applies views with `as_strided`. A reshape of
+  non-contiguous data (for example after the head-merge transpose) is not a
+  strided view, so folding stops there. Measured effect on the transformer
+  block: 19 → 13 ops and 15 → 12 kernels, but no measurable runtime change
+  (±1%). The transposes were about 2% of runtime, and the strided gather for
+  `k^T` during packing costs some of that back.
 * **Order.** Matmul fusion runs first so that bias and activation end up in the
   matmul epilogue rather than in a separate fused-elementwise kernel. The matmul
   pass also absorbs an already-fused `fused_elementwise` consumer, so the order is

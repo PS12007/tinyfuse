@@ -9,10 +9,11 @@ from .constant_folding import constant_folding
 from .cse import common_subexpression_elimination
 from .dce import dead_code_elimination
 from .fusion import elementwise_fusion
+from .layout_folding import layout_folding
 from .matmul_fusion import matmul_epilogue_fusion
 from .manager import PIPELINES, PassManager, optimize
 
 __all__ = [
     "constant_folding", "common_subexpression_elimination", "dead_code_elimination",
-    "elementwise_fusion", "matmul_epilogue_fusion", "PassManager", "PIPELINES", "optimize",
+    "elementwise_fusion", "matmul_epilogue_fusion", "layout_folding", "PassManager", "PIPELINES", "optimize",
 ]

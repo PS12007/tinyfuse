@@ -60,9 +60,9 @@ def node_key(n) -> Key:
     """Tuning key of a matmul / fused_matmul node.  The epilogue is part of
     the key because its cost depends on the micro-tile shape."""
     from .codegen.c_backend import epilogue_signature
-    a, b = n.inputs[0], n.inputs[1]
-    return (numel(n.shape[:-2]), a.shape[-2], b.shape[-1], a.shape[-1],
-            epilogue_signature(n))
+    from .ops import matmul_operand_shapes
+    sa, sb = matmul_operand_shapes(n)
+    return (numel(n.shape[:-2]), sa[-2], sb[-1], sa[-1], epilogue_signature(n))
 
 
 def matmul_nodes(g: Graph) -> List[Tuple[Key, object]]:

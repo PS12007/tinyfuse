@@ -193,8 +193,10 @@ def _fmt_attrs(n: Node) -> str:
         elif k in ("program", "epilogue"):
             if v is not None:
                 parts.append(f"{k}=[{format_program(v)}]")
-        elif k == "tile":
-            parts.append(f"tile={v}")
+        elif k in ("a_view", "b_view"):
+            if v is not None:
+                shp, st = v
+                parts.append(f"{k}={_fmt_shape(shp)} strides [{','.join(map(str, st))}]")
         else:
             if isinstance(v, (list, tuple)):
                 v = "[" + ",".join(str(x) for x in v) + "]"

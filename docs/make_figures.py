@@ -81,7 +81,7 @@ def _epilogue_words(n):
     """Describe a fused_matmul epilogue in words, from its real operands."""
     words = []
     extra = n.inputs[2:]
-    for op, operands in n.attrs["epilogue"]:
+    for op, operands in n.attrs.get("epilogue") or ():
         if op == "add":
             ins = [o for o in operands if o[0] == "in"]
             if ins:
@@ -98,7 +98,8 @@ def _epilogue_words(n):
 
 def _label(n):
     if n.op == "fused_matmul":
-        return "matmul + " + " + ".join(_epilogue_words(n))
+        words = _epilogue_words(n)
+        return "matmul + " + " + ".join(words) if words else "matmul"
     return n.op
 
 
@@ -143,12 +144,21 @@ def _draw_graph(ax, g, title):
         ax.add_patch(FancyBboxPatch((x - w / 2, y - 0.26), w, 0.52,
                                     boxstyle="round,pad=0.0,rounding_size=0.08",
                                     fc=color, ec=SURFACE, lw=1.5, zorder=3))
-        if n.op == "fused_matmul":   # orange stripe: elementwise work folded in
+        if n.op == "fused_matmul" and (n.attrs.get("a_view") or n.attrs.get("b_view")):
+            # gray stripe: reads a transposed/reshaped input in place
+            ax.add_patch(FancyBboxPatch((x - w / 2, y - 0.26), 0.16, 0.52,
+                                        boxstyle="round,pad=0.0,rounding_size=0.06",
+                                        fc=GRAY, ec="none", zorder=3.5))
+        if n.op == "fused_matmul" and n.attrs.get("epilogue"):   # orange: epilogue
             ax.add_patch(FancyBboxPatch((x + w / 2 - 0.16, y - 0.26), 0.16, 0.52,
                                         boxstyle="round,pad=0.0,rounding_size=0.06",
                                         fc=ORANGE, ec="none", zorder=3.5))
         dark = color in (BLUE,)
-        ax.text(x - (0.08 if n.op == "fused_matmul" else 0), y, label, ha="center",
+        shift = 0.0
+        if n.op == "fused_matmul":
+            shift += 0.08 if (n.attrs.get("a_view") or n.attrs.get("b_view")) else 0.0
+            shift -= 0.08 if n.attrs.get("epilogue") else 0.0
+        ax.text(x + shift, y, label, ha="center",
                 va="center", fontsize=7.3, zorder=4,
                 color="white" if dark else TEXT)
     ys = [p[1] for p in pos.values()]
@@ -169,7 +179,7 @@ def fig_graph():
                              gridspec_kw={"width_ratios": [1, 1]})
     fig.patch.set_facecolor(SURFACE)
     _draw_graph(axes[0], g, f"as traced: {n0} ops, {k0} kernels")
-    _draw_graph(axes[1], opt, f"after fusion: {n1} ops, {k1} kernels")
+    _draw_graph(axes[1], opt, f"after fusion + layout folding: {n1} ops, {k1} kernels")
     # same vertical scale so the height difference is real
     lo = min(axes[0].get_ylim()[0], axes[1].get_ylim()[0])
     for ax in axes:
@@ -181,7 +191,8 @@ def fig_graph():
     fig.legend(handles=handles, loc="lower center", ncol=len(handles), frameon=False,
                fontsize=8.5, labelcolor=TEXT)
     fig.text(0.01, 0.985, "Transformer block (seq=64, d=256, 4 heads). Graph inputs and "
-             "constants not drawn. Orange stripe = elementwise ops folded into the matmul.",
+             "constants not drawn. Orange stripe: elementwise ops folded into the matmul. "
+             "Gray stripe: reads a transposed input in place.",
              fontsize=8.5, color=TEXT2, va="top")
     fig.tight_layout(rect=(0, 0.03, 1, 0.97))
     save(fig, "fusion_graph.png")
@@ -305,7 +316,7 @@ def fig_profile(cfg=(128, 512, 8, 2048), calls=40):
     fig, ax = plt.subplots(figsize=(9, 2.6), dpi=150)
     fig.patch.set_facecolor(SURFACE)
     style_axes(ax)
-    labels = {"unfused": "unfused (25 kernels)", "fused": "fused (15 kernels)"}
+    labels = {p: f"{p} ({len(m.module.gen.kernels)} kernels)" for p, m in mods.items()}
     for y, p in enumerate(["fused", "unfused"]):
         left = 0.0
         for c, col in zip(cats, colors):

@@ -42,7 +42,7 @@ print(f.source)      # the generated C
 y = f(x, w1, b1, w2, b2)   # NumPy arrays in, NumPy arrays out
 ```
 
-Run the tests (266 of them, about 20 seconds; the first run spends most of
+Run the tests (291 of them, about 20 seconds; the first run spends most of
 that compiling C):
 
 ```bash
@@ -96,7 +96,8 @@ it after every pass.
 
 ### 2. Optimizing and fusing
 
-The `fused` pipeline runs constant folding, CSE and DCE, then two fusion passes:
+The `fused` pipeline runs constant folding, CSE and DCE, then two fusion passes
+and a layout pass:
 
 * **Matmul epilogue fusion.** Starting at each matmul, it follows the chain of
   elementwise ops that consume the result: bias add, activation, residual add,
@@ -106,9 +107,13 @@ The `fused` pipeline runs constant folding, CSE and DCE, then two fusion passes:
 * **Elementwise fusion.** Whatever elementwise chains are left get merged into
   single loops. A node joins a group only if all of its users are already in
   that group. That rule is what guarantees fusion can never create a cycle.
+* **Layout folding.** A transpose, or a reshape of contiguous data, is just a
+  strided view of its input. When one feeds a matmul, the matmul reads the
+  original buffer through those strides during packing, and the transpose
+  kernel disappears. In attention that removes the q/k/v head splits and `k^T`.
 
-On the transformer block this takes 29 ops down to 19, and 25 kernel launches
-down to 15:
+On the transformer block this takes 29 ops down to 13, and 25 kernels down
+to 12:
 
 ![Transformer block graph before and after fusion](docs/img/fusion_graph.png)
 
@@ -135,8 +140,18 @@ graph mlp(%x: f32[32,64], %w1: f32[64,128], %b1: f32[128], %w2: f32[128,10], %b2
 }
 ```
 
-In the transformer, the residual add is absorbed too:
-`fused_matmul(%14, %wo, %bo, %x) {epilogue=[t0=add(acc,in0); t1=add(in1,t0)]}`.
+In the transformer the residual add is absorbed too, and the attention scores
+read q and `k^T` straight out of the projection outputs:
+
+```
+%4: f32[4,64,64] = fused_matmul(%1, %2) {a_view=f32[4,64,64] strides [64,256,1],
+                     b_view=f32[4,64,64] strides [64,1,256], epilogue=[t0=mul(acc,0.125)]}
+%9: f32[64,256]  = fused_matmul(%8, %wo, %bo, %x) {epilogue=[t0=add(acc,in0); t1=add(in1,t0)]}
+```
+
+Layout folding is correct and tested, but I couldn't measure a speedup from
+it: the transposes were only about 2% of the runtime, and reading `k^T`
+through a strided gather while packing costs some of that back.
 
 ### 3. Generating C
 
@@ -186,7 +201,9 @@ fused workspace is 40% smaller.
 Setup: one cloud VM with an Intel Xeon @ 2.80 GHz (4 vCPUs, AVX-512), GCC 13.3,
 NumPy 2.5.3 (OpenBLAS), PyTorch 2.15 on CPU in eager mode. Each variant's output
 is checked against NumPy before it is timed. The numbers are medians. Raw data
-is in `docs/benchmarks_1t.csv` and `docs/benchmarks_4t.csv`.
+is in `docs/benchmarks_1t.csv` and `docs/benchmarks_4t.csv`. They were measured
+before layout folding was added; an A/B run with and without it differed by
+less than 1.5% on every transformer size.
 
 The five variants: tinyfuse with cleanup passes but no fusion (`unfused`), with
 fusion (`fused`), with fusion and autotuned tiles (`fused+tuned`), the same
@@ -282,7 +299,7 @@ with `rtol = atol = 1e-4`.
 |---|---|
 | `test_frontend.py` | tracing, operator overloading, trace-time shape errors |
 | `test_ir.py` | shape inference, exact printer output, the verifier rejecting 10 kinds of broken IR |
-| `test_pass_*.py` | each pass: exact IR before and after, same results through the interpreter, cases that must *not* fuse |
+| `test_pass_*.py` | each pass, layout folding included: exact IR before and after, same results through the interpreter, cases that must *not* fuse or fold |
 | `test_codegen_ops.py` | every op through C at odd sizes and with every broadcast pattern; tiny tiles that force every edge path in the matmul; aliased and duplicated outputs; alignment; the profiler |
 | `test_models.py` | MLP and transformer at 4 sizes × 3 pipelines, a PyTorch cross-check, OpenMP builds |
 | `test_fuzz.py` | 40 random graphs, each compiled 4 ways, compared with the interpreter |
@@ -298,8 +315,9 @@ with `rtol = atol = 1e-4`.
   general reduction. Softmax and layernorm only reduce over the last axis, and
   batched matmul needs identical batch dimensions.
 * Fusion is local. Layernorm and softmax are never fused with their
-  neighbours, transposes are always materialized (including `k^T` in
-  attention), and there is nothing like flash attention.
+  neighbours, and there is nothing like flash attention. Transposes that feed a
+  matmul are folded away, but a transpose of a matmul's *output* (the head
+  merge after `att @ v`) is still materialized.
 * The matmul is good but not BLAS-grade everywhere: no prefetching, no
   assembly, and weights are re-packed on every call even when they are
   constants. It is tuned for AVX-512; AVX2 machines run the same code with
@@ -323,7 +341,7 @@ with `rtol = atol = 1e-4`.
 | `tinyfuse/frontend.py` | `Tensor`, operator overloading, `trace()` |
 | `tinyfuse/ops.py` | op registry: shape rules plus NumPy semantics |
 | `tinyfuse/ir.py` | graph, printer, verifier |
-| `tinyfuse/passes/` | constant folding, CSE, DCE, both fusion passes, pass manager |
+| `tinyfuse/passes/` | constant folding, CSE, DCE, both fusion passes, layout folding, pass manager |
 | `tinyfuse/codegen/` | C emitter and memory planner |
 | `tinyfuse/runtime.py` | gcc invocation, `.so` cache, `ctypes` wrapper, aligned buffers, profiler |
 | `tinyfuse/autotune.py` | tile search and the tuning database |

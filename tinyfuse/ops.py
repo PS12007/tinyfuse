@@ -349,8 +349,41 @@ register(OpDef("fused_elementwise", None, _fused_ew_infer,
                attr_names=("program",)))
 
 
+def contiguous_strides(shape) -> Tuple[int, ...]:
+    st, acc = [], 1
+    for d in reversed(tuple(shape)):
+        st.append(acc)
+        acc *= d
+    return tuple(reversed(st))
+
+
+def view_shape(base_shape: Shape, view) -> Shape:
+    """Logical shape of an operand read through a strided ``view`` =
+    (shape, element strides) over a contiguous ``base_shape`` buffer."""
+    if view is None:
+        return tuple(base_shape)
+    shape, strides = view
+    if len(shape) != len(strides) or any(st < 0 for st in strides) or any(d <= 0 for d in shape):
+        raise ShapeError(f"bad operand view {view}")
+    last = sum((d - 1) * st for d, st in zip(shape, strides))
+    if last >= numel(base_shape):
+        raise ShapeError(f"view {view} reads past the end of a {list(base_shape)} buffer")
+    return tuple(shape)
+
+
+def apply_view(x: np.ndarray, view) -> np.ndarray:
+    if view is None:
+        return x
+    shape, strides = view
+    x = np.ascontiguousarray(x)
+    return np.lib.stride_tricks.as_strided(x, shape=shape,
+                                           strides=[st * x.itemsize for st in strides])
+
+
 def _fused_mm_infer(s, a):
-    out = matmul_shape(s[0], s[1])
+    sa = view_shape(s[0], a.get("a_view"))
+    sb = view_shape(s[1], a.get("b_view"))
+    out = matmul_shape(sa, sb)
     ep = a.get("epilogue")
     if ep is not None:
         check_program(ep, len(s) - 2, allow_acc=True)
@@ -363,7 +396,7 @@ def _fused_mm_infer(s, a):
 
 
 def _fused_mm_eval(xs, a):
-    acc = _f32(np.matmul(xs[0], xs[1]))
+    acc = _f32(np.matmul(apply_view(xs[0], a.get("a_view")), apply_view(xs[1], a.get("b_view"))))
     ep = a.get("epilogue")
     if ep is None:
         return acc
@@ -371,4 +404,11 @@ def _fused_mm_eval(xs, a):
 
 
 register(OpDef("fused_matmul", None, _fused_mm_infer, _fused_mm_eval,
-               attr_names=("epilogue",)))
+               attr_names=("epilogue", "a_view", "b_view")))
+
+
+def matmul_operand_shapes(n) -> Tuple[Shape, Shape]:
+    """Logical A and B shapes of a matmul / fused_matmul node (views applied)."""
+    a, b = n.inputs[0], n.inputs[1]
+    return (view_shape(a.shape, n.attrs.get("a_view")),
+            view_shape(b.shape, n.attrs.get("b_view")))

@@ -61,3 +61,24 @@ def test_cli(tmp_path, capsys):
     main(["--shape", "8x16x24", "--db", str(p), "--candidates", "2"])
     assert "best" in capsys.readouterr().out
     assert json.loads(p.read_text())
+
+
+def test_thread_count_is_part_of_the_key(tmp_path):
+    db = TuningDB(tmp_path / "t.json")
+    shape = (1, 32, 64, 48, "")
+    one, four = MatmulTile(6, 16, 16, 6, 1), MatmulTile(12, 32, 16, 6, 1)
+    db.record(shape, VW, one, 10.0, 9.0, 3)
+    db.record(shape, VW, four, 30.0, 20.0, 3, threads=4)
+    assert db.get(shape, VW) == one and db.get(shape, VW, 4) == four
+    assert db.get(shape, VW, 2) is None
+    assert "threads" not in TuningDB.key(shape, VW)          # old keys stay valid
+    g = tf.trace(lambda a, b: a @ b, (32, 48), (48, 64))
+    serial = db.tiles_for(g, CodegenOptions(vector_width=VW))
+    par = db.tiles_for(g, CodegenOptions(vector_width=VW, parallel=True, max_threads=4))
+    assert list(serial.values()) == [one] and list(par.values()) == [four]
+
+
+def test_parallel_tuning_runs(tmp_path):
+    tile, gf, res = tune_matmul(1, 24, 40, 16, max_candidates=3, reps=1, min_time=0.0,
+                                confirm_time=0.0, threads=2)
+    assert gf > 0 and len(res) == 3

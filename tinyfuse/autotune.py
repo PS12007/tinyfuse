@@ -127,7 +127,7 @@ def _subgraph(node) -> Graph:
 def tune_node(node, vw: Optional[int] = None, max_candidates: int = 32, reps: int = 5,
               min_time: float = 0.05, confirm_top: int = 4, confirm_time: float = 0.5,
               min_gain: float = 0.03, verbose: bool = False,
-              seed: int = 0) -> Tuple[MatmulTile, float, List[dict]]:
+              seed: int = 0, threads: int = 1) -> Tuple[MatmulTile, float, List[dict]]:
     """Search tiles for one matmul / fused_matmul node (with its epilogue).
 
     Phase 1 screens every candidate (min of a short burst).  Phase 2 re-times
@@ -135,7 +135,8 @@ def tune_node(node, vw: Optional[int] = None, max_candidates: int = 32, reps: in
     per round, median over rounds), so slow drifts in machine load cannot
     decide the winner, and keeps the default unless a challenger beats it by
     more than ``min_gain``.  Returns (best tile, GFLOP/s, phase-1 results);
-    ``results[0]`` is always the default tile."""
+    ``results[0]`` is always the default tile.  With ``threads > 1`` every
+    candidate is built and timed as an OpenMP kernel on that many threads."""
     from .compiler import compile_graph
     from .interpreter import run_graph
     from .runtime import native_vector_width
@@ -148,7 +149,8 @@ def tune_node(node, vw: Optional[int] = None, max_candidates: int = 32, reps: in
     flops = 2.0 * batch * m * n * k
     results, fns = [], {}
     for t in candidate_tiles(m, n, k, vw, max_candidates, seed):
-        f = compile_graph(g, "none", CodegenOptions(vector_width=vw, default_tile=t))
+        f = compile_graph(g, "none", CodegenOptions(vector_width=vw, default_tile=t,
+                                                    parallel=threads > 1, max_threads=threads))
         if not np.allclose(f(*xs), ref, rtol=1e-3, atol=1e-3):  # never pick a broken kernel
             raise AssertionError(f"tile {t} gives wrong results")
         s = _time_min(f, xs, reps, min_time)
@@ -192,7 +194,9 @@ def tune_matmul(batch: int, m: int, n: int, k: int, **kw):
 
 
 class TuningDB:
-    """Persistent map from matmul shape (+ CPU, SIMD width) to best tile."""
+    """Persistent map from matmul shape (+ CPU, SIMD width, thread count) to
+    best tile.  Single-thread keys carry no thread field, so databases written
+    before threading was tuned stay valid."""
 
     def __init__(self, path: Optional[os.PathLike] = None):
         self.path = Path(path) if path else None
@@ -201,18 +205,20 @@ class TuningDB:
             self.entries = json.loads(self.path.read_text())
 
     @staticmethod
-    def key(shape: Key, vw: int) -> str:
+    def key(shape: Key, vw: int, threads: int = 1) -> str:
         b, m, n, k = shape[:4]
         epi = shape[4] if len(shape) > 4 else ""
-        return f"cpu={cpu_fingerprint()},vw={vw},b={b},m={m},n={n},k={k},epilogue={epi}"
+        thr = f",threads={threads}" if threads > 1 else ""
+        return f"cpu={cpu_fingerprint()},vw={vw}{thr},b={b},m={m},n={n},k={k},epilogue={epi}"
 
-    def get(self, shape: Key, vw: int) -> Optional[MatmulTile]:
-        e = self.entries.get(self.key(shape, vw))
+    def get(self, shape: Key, vw: int, threads: int = 1) -> Optional[MatmulTile]:
+        e = self.entries.get(self.key(shape, vw, threads))
         return MatmulTile(*e["tile"]) if e else None
 
     def record(self, shape: Key, vw: int, tile: MatmulTile, gflops: float,
-               default_gflops: float, n_candidates: int):
-        self.entries[self.key(shape, vw)] = {
+               default_gflops: float, n_candidates: int, threads: int = 1):
+        self.entries[self.key(shape, vw, threads)] = {
+            "threads": threads,
             "shape": {"batch": shape[0], "m": shape[1], "n": shape[2], "k": shape[3],
                       "epilogue": shape[4] if len(shape) > 4 else ""},
             "tile": list(tile.key()), "tile_names": ["mb", "nb", "kb", "mr", "nv"],
@@ -227,14 +233,15 @@ class TuningDB:
 
     def tiles_for(self, g: Graph, options: CodegenOptions) -> Dict[Key, MatmulTile]:
         out = {}
+        threads = options.max_threads if options.parallel else 1
         for s in matmul_shapes(g):
-            t = self.get(s, options.vector_width)
+            t = self.get(s, options.vector_width, threads)
             if t is not None:
                 out[s] = t
         return out
 
     def tune(self, shapes: Iterable[Key], vw: Optional[int] = None, retune: bool = False,
-             verbose: bool = False, **kw) -> "TuningDB":
+             verbose: bool = False, threads: int = 1, **kw) -> "TuningDB":
         """Tune plain matmuls of the given (batch, M, N, K) shapes."""
         from . import frontend as F
         items = []
@@ -244,20 +251,21 @@ class TuningDB:
             sb = (b, k, n) if b > 1 else (k, n)
             node = F.trace(lambda x, y: x @ y, sa, sb).outputs[0]
             items.append((node_key(node), node))
-        return self._tune_nodes(items, vw, retune, verbose, **kw)
+        return self._tune_nodes(items, vw, retune, verbose, threads, **kw)
 
-    def _tune_nodes(self, items, vw=None, retune=False, verbose=False, **kw) -> "TuningDB":
+    def _tune_nodes(self, items, vw=None, retune=False, verbose=False, threads=1,
+                    **kw) -> "TuningDB":
         from .runtime import native_vector_width
         vw = vw or native_vector_width()
         for s, node in items:
-            if not retune and self.get(s, vw) is not None:
+            if not retune and self.get(s, vw, threads) is not None:
                 continue
             if verbose:
                 print(f"tuning {node.op} batch={s[0]} M={s[1]} N={s[2]} K={s[3]} "
-                      f"epilogue=[{s[4]}]")
-            tile, gf, res = tune_node(node, vw=vw, verbose=verbose, **kw)
+                      f"epilogue=[{s[4]}] threads={threads}")
+            tile, gf, res = tune_node(node, vw=vw, verbose=verbose, threads=threads, **kw)
             default_gf = res[0].get("confirm_gflops", res[0]["gflops"])
-            self.record(s, vw, tile, gf, default_gf, len(res))
+            self.record(s, vw, tile, gf, default_gf, len(res), threads)
             if verbose:
                 print(f"  best {tile.key()} {gf:.1f} GFLOP/s (default {default_gf:.1f})")
             self.save()
@@ -284,8 +292,10 @@ def main(argv=None):
     ap.add_argument("--db", default="tuning.json")
     ap.add_argument("--candidates", type=int, default=32)
     ap.add_argument("--retune", action="store_true")
+    ap.add_argument("--threads", type=int, default=1, help="tune OpenMP kernels on N threads")
     a = ap.parse_args(argv)
-    TuningDB(a.db).tune(a.shape, max_candidates=a.candidates, retune=a.retune, verbose=True)
+    TuningDB(a.db).tune(a.shape, max_candidates=a.candidates, retune=a.retune, verbose=True,
+                        threads=a.threads)
 
 
 if __name__ == "__main__":

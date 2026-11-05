@@ -73,7 +73,8 @@ def main(argv=None):
         torch = None
 
     vw = native_vector_width()
-    opts = lambda: CodegenOptions(vector_width=vw, parallel=a.threads > 1)  # noqa: E731
+    opts = lambda: CodegenOptions(vector_width=vw, parallel=a.threads > 1,  # noqa: E731
+                                  max_threads=a.threads)
     db = TuningDB(a.tuning_db)
 
     # ---- workloads ----------------------------------------------------------
@@ -145,7 +146,7 @@ def main(argv=None):
         }
         has_matmul = any(n.op == "matmul" for n in g.nodes)
         if not a.no_tune and has_matmul:   # the tuner only tunes matmul tiles
-            db.tune_graph(g, verbose=True)
+            db.tune_graph(g, verbose=True, threads=a.threads)
             variants["tinyfuse-fused+tuned"] = tf.compile_graph(g, "fused", opts(), tuning=db)
         compile_s = time.perf_counter() - t0
         variants["numpy"] = np_fn

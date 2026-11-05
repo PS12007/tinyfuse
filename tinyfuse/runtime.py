@@ -20,6 +20,19 @@ BASE_FLAGS = ["-O3", "-march=native", "-ffast-math", "-fopenmp-simd", "-std=gnu1
               "-fPIC", "-shared"]
 
 
+def aligned_empty(shape, align: int = 64) -> np.ndarray:
+    """float32 array whose data starts on an ``align``-byte boundary.
+
+    NumPy only guarantees 16-byte alignment (large blocks typically start 16
+    bytes past a page boundary), which makes every 64-byte AVX-512 access to
+    the matmul packing buffers and output tiles straddle two cache lines --
+    measured at ~1.4x slower matmuls."""
+    n = int(np.prod(shape, dtype=np.int64))
+    raw = np.empty(n + align // 4, dtype=np.float32)
+    off = (-raw.ctypes.data % align) // 4
+    return raw[off:off + n].reshape(shape)
+
+
 class CompileError(RuntimeError):
     pass
 
@@ -81,8 +94,13 @@ class CompiledModule:
         self.input_shapes = [tuple(i.shape) for i in g.inputs]
         self.input_names = [i.name for i in g.inputs]
         self.output_shapes = [tuple(o.shape) for o in g.outputs]
-        self._consts = [np.asarray(c, dtype=np.float32, order="C") for c in gen.consts]
-        self._ws = np.zeros(max(gen.workspace_floats, 16), dtype=np.float32)
+        self._consts = []
+        for c in gen.consts:
+            a = aligned_empty(c.shape)
+            a[...] = c
+            self._consts.append(a)
+        self._ws = aligned_empty((max(gen.workspace_floats, 16),))
+        self._ws[:] = 0.0
         n = gen.n_inputs + gen.n_outputs + len(self._consts) + 1
         self._ptrs = (ctypes.c_void_p * n)()
         base = gen.n_inputs + gen.n_outputs
@@ -117,7 +135,7 @@ class CompiledModule:
             keep.append(a)
             self._ptrs[i] = a.ctypes.data
         if out is None:
-            out = [np.empty(s, dtype=np.float32) for s in self.output_shapes]
+            out = [aligned_empty(s) for s in self.output_shapes]
         for i, (o, shape) in enumerate(zip(out, self.output_shapes)):
             if o.shape != shape or o.dtype != np.float32 or not o.flags.c_contiguous:
                 raise ValueError(f"output {i} must be a C-contiguous float32 array of {shape}")

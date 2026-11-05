@@ -120,13 +120,15 @@ def c_scalar_op(op: str, a: List[str]) -> str:
     if op == "tanh":
         return f"tanhf({a[0]})"
     if op == "sigmoid":
-        return f"(1.0f / (1.0f + expf(-{a[0]})))"
+        # exponent clamped: libmvec's expf takes a slow scalar path on underflow
+        return f"(1.0f / (1.0f + expf(fmaxf(fminf(-{a[0]}, 80.0f), -80.0f))))"
     if op == "gelu":
         # 0.5*x*(1+tanh(y)) == x * sigmoid(2y): one expf instead of tanhf (faster
-        # with libmvec).  The exponent is clamped so expf never overflows.
+        # with libmvec).  The exponent is clamped to [-80, 80]: that never
+        # overflows, and avoids libmvec's very slow scalar path for underflow.
         x = a[0]
-        return (f"({x} / (1.0f + expf(fminf(-1.5957691216f * "
-                f"({x} + 0.044715f * {x} * {x} * {x}), 80.0f))))")
+        return (f"({x} / (1.0f + expf(fmaxf(fminf(-1.5957691216f * "
+                f"({x} + 0.044715f * {x} * {x} * {x}), 80.0f), -80.0f))))")
     raise NotImplementedError(op)
 
 
@@ -420,24 +422,29 @@ class CodeGen:
         w("for (int r = 0; r < hgt; ++r)")
         w("    for (int c = 0; c < wdt; ++c) Cb[(long)(ii + r) * N + jj + c] = tmp[r * NR + c];")
         w.close()
+        w.close()  # p
+        w.close()  # q
         if epilogue:
-            w("/* fused epilogue on the finished micro-tile (still in L1) */")
+            # Applied once per finished MB x NB block, while it is still in L2.
+            # (Measured equal to applying it per micro-tile, and it keeps the
+            # micro-kernel loop body minimal.)
+            w("/* fused epilogue on the finished cache block */")
             w.open("if (last)")
-            w.open("for (int r = 0; r < hgt; ++r)")
-            w("const long i = ii + r;")
+            if self.opts.parallel:
+                w("#pragma omp parallel for schedule(static) if(mb > 8)")
+            w.open("for (int r = 0; r < mb; ++r)")
+            w("const long i = i0 + r;")
             w("float* restrict crow = Cb + i * N;")
             w("#pragma omp simd")
-            w.open("for (long j = jj; j < jj + wdt; ++j)")
+            w.open("for (long j = j0; j < j0 + nb; ++j)")
             in_exprs = [f"eb{k}[{_index(['i', 'j'], st[-2:])}]" for k, st in enumerate(ex_strides)]
             stmts, res = emit_program(epilogue, in_exprs, acc_expr="crow[j]")
-            for s in stmts:
-                w(s)
+            for s_ in stmts:
+                w(s_)
             w(f"crow[j] = {res};")
             w.close()
             w.close()
             w.close()
-        w.close()  # p
-        w.close()  # q
         w.close()  # i0
         w.close()  # k0
         w.close()  # j0

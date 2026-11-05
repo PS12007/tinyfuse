@@ -141,9 +141,19 @@ nothing.
     with OpenBLAS. Vector extensions are portable C: on AVX2 or SSE machines GCC
     splits each vector into narrower ones. `VW` comes from probing
     `gcc -march=native` for `__AVX512F__` / `__AVX__`.
-  * **Epilogue placement.** The epilogue runs on each finished micro-tile right
-    after its last K block, while the tile is still in L1, in a `#pragma omp simd`
-    loop. There is no extra pass over C and no intermediate buffer.
+  * **Epilogue placement.** After the last K block of an `MB×NB` cache block, the
+    epilogue runs over that block while it is still in L2, in a `#pragma omp simd`
+    loop. There is no extra pass over C in DRAM and no intermediate buffer. We
+    also tried running it per micro-tile, in L1: it measured the same, and the
+    block form keeps the micro-kernel loop body minimal.
+  * **64-byte alignment matters (a lot).** NumPy only guarantees 16-byte
+    alignment, and large blocks usually start 16 bytes past a page boundary. With
+    a misaligned workspace or output, every 64-byte AVX-512 load and store in the
+    micro-kernel splits a cache line. That made matmuls **~1.4× slower**,
+    *bimodally*, depending on where the allocator happened to put a module's
+    buffers. It first looked like "fusion makes matmul slower" and "the autotuner
+    picks bad tiles". The workspace, constants and outputs are now allocated
+    64-byte aligned (`runtime.aligned_empty`), and a test checks this.
   * **Default tile:** `mb=48, nb=512, kb=256, mr=6, nv=4` for AVX-512, which uses
     24 of the 32 zmm registers for accumulators. In measurements it was the most
     consistent across the benchmark shapes. The default AVX2 tile is `6×2`
@@ -160,7 +170,11 @@ nothing.
   input, a constant, an alias of one of those, or a duplicate of another output,
   it gets a `memcpy`, so the caller never receives aliased memory.
 * **GELU lowering.** `0.5·x·(1+tanh(y)) == x·sigmoid(2y)`, so we emit
-  `x / (1 + expf(-2y))`, with the exponent clamped to 80 so it cannot overflow.
+  `x / (1 + expf(-2y))`, with the exponent clamped to `[-80, 80]`. The upper
+  clamp prevents overflow. The lower clamp matters for speed: libmvec's `expf`
+  falls back to a slow scalar path when its result underflows, which made GELU
+  on large activations ~10× slower (≈10 ns vs ≈1 ns per element). `sigmoid` is
+  clamped the same way. The error is below 1e-34.
   With libmvec, vectorised `expf` costs about half as much as vectorised `tanhf`
   (≈0.8 vs ≈2.0 ns/element in a micro-benchmark).
 

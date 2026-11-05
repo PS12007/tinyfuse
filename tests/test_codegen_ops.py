@@ -220,3 +220,20 @@ def test_profiler_reports_every_kernel(rng):
     g = tf.compile(lambda x: x * 2.0, (2,))
     with pytest.raises(RuntimeError):
         g.module.profile()
+
+
+def test_buffers_are_64_byte_aligned(rng):
+    f = tf.compile(lambda a, b: tf.relu(a @ b + tf.constant(np.ones(7))), (5, 3), (3, 7))
+    m = f.module
+    assert m._ws.ctypes.data % 64 == 0
+    assert all(c.ctypes.data % 64 == 0 for c in m._consts)
+    for _ in range(5):
+        assert f(rand(rng, 5, 3), rand(rng, 3, 7)).ctypes.data % 64 == 0
+
+
+def test_gelu_sigmoid_extreme_inputs():
+    x = np.array([-1e4, -100, -20, -1e-3, 0, 1e-3, 20, 100, 1e4], np.float32)
+    for f, ref in [(tf.gelu, np_gelu), (tf.sigmoid, np_sigmoid)]:
+        with np.errstate(over="ignore"):
+            r = ref(x.astype(np.float64))
+        assert_close(run(f, [x.shape], [x]), r)

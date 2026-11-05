@@ -310,11 +310,11 @@ with every temporary held in registers.
 | 256 × 1024, 1 thread | 1.658 | **0.903** | 2.187 | 2.398 |
 | 1024 × 1024, 1 thread | 7.869 | **3.422** | 15.48 | 10.69 |
 | 4096 × 1024, 1 thread | 38.65 | **13.41** | 61.70 | 47.55 |
-| 256 × 1024, 4 threads | 0.363 | **0.250** | 2.093 | 0.502 |
-| 1024 × 1024, 4 threads | 1.530 | **0.843** | 12.81 | 6.076 |
-| 4096 × 1024, 4 threads | 9.613 | **3.429** | 65.29 | 13.51 |
+| 256 × 1024, 4 threads | 0.346 | **0.226** | 2.196 | 0.512 |
+| 1024 × 1024, 4 threads | 1.806 | **0.913** | 11.71 | 6.408 |
+| 4096 × 1024, 4 threads | 14.18 | **4.404** | 61.79 | 13.98 |
 
-Here fusion is worth 1.8 to 2.9 times on one thread and 1.5 to 2.8 times on
+Here fusion is worth 1.8 to 2.9 times on one thread and 1.5 to 3.2 times on
 four, and the fused kernel beats PyTorch eager by 2 to 7 times. The fused loop
 runs at about 3.5 ns per element on one core, almost all of it spent in the
 three transcendental functions (`exp` for GELU and sigmoid, plus `tanh`), so

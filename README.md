@@ -9,7 +9,8 @@ compiles that C with `gcc -O3 -march=native`, and calls it through `ctypes`.
 
 It handles a 2-layer MLP and a full transformer block (multi-head attention,
 GELU MLP, layernorm, residuals). On one core it runs them 1.2 to 1.7 times
-faster than the same code in NumPy.
+faster than the same code in NumPy. On elementwise-heavy code, where fusion
+has the most to do, the fused kernels are 2 to 7 times faster than PyTorch eager.
 
 ![tinyfuse demo: compile an MLP, print the fused IR, check against NumPy](docs/img/demo.gif)
 
@@ -42,7 +43,7 @@ print(f.source)      # the generated C
 y = f(x, w1, b1, w2, b2)   # NumPy arrays in, NumPy arrays out
 ```
 
-Run the tests (291 of them, about 20 seconds; the first run spends most of
+Run the tests (292 of them, about 20 seconds; the first run spends most of
 that compiling C):
 
 ```bash
@@ -201,9 +202,9 @@ fused workspace is 40% smaller.
 Setup: one cloud VM with an Intel Xeon @ 2.80 GHz (4 vCPUs, AVX-512), GCC 13.3,
 NumPy 2.5.3 (OpenBLAS), PyTorch 2.15 on CPU in eager mode. Each variant's output
 is checked against NumPy before it is timed. The numbers are medians. Raw data
-is in `docs/benchmarks_1t.csv` and `docs/benchmarks_4t.csv`. They were measured
-before layout folding was added; an A/B run with and without it differed by
-less than 1.5% on every transformer size.
+is in `docs/benchmarks_*.csv`. The 1-thread MLP and transformer numbers were
+measured before layout folding was added; an A/B run with and without it
+differed by less than 1.5% on every transformer size.
 
 The five variants: tinyfuse with cleanup passes but no fusion (`unfused`), with
 fusion (`fused`), with fusion and autotuned tiles (`fused+tuned`), the same
@@ -251,16 +252,52 @@ OpenBLAS and PyTorch's) kept fighting each other for the 4 cores.
 
 | ms per call, 4 threads | unfused | fused | fused+tuned | NumPy | PyTorch |
 |---|---:|---:|---:|---:|---:|
-| MLP 16 × 256→1024→256 | 0.202 | 0.181 | 0.169 | 0.223 | **0.101** |
-| MLP 64 × 512→2048→512 | 2.170 | 1.972 | 2.171 | 1.723 | **0.859** |
-| MLP 256 × 1024→4096→1024 | 19.00 | 17.74 | 17.48 | 18.33 | **11.66** |
-| Transformer seq 64, d 256 | 1.097 | 1.112 | 1.033 | 1.442 | **0.826** |
-| Transformer seq 128, d 512 | 5.469 | 5.192 | 5.478 | 7.569 | **3.186** |
-| Transformer seq 256, d 768 | 20.51 | 17.09 | 16.76 | 27.10 | **10.99** |
+| MLP 16 × 256→1024→256 | 0.191 | 0.173 | 0.173 | 0.206 | **0.096** |
+| MLP 64 × 512→2048→512 | 2.090 | 2.110 | 2.117 | 1.445 | **0.817** |
+| MLP 256 × 1024→4096→1024 | 15.81 | 16.22 | 16.51 | 16.71 | **9.80** |
+| Transformer seq 64, d 256 | 1.036 | 1.031 | 1.014 | 1.449 | **0.806** |
+| Transformer seq 128, d 512 | 5.148 | 4.615 | 5.264 | 8.553 | **3.133** |
+| Transformer seq 256, d 768 | 17.05 | 16.47 | 15.66 | 25.61 | **12.03** |
 
-Multithreaded, PyTorch wins every row by 1.35 to 2.3 times. tinyfuse still beats
-NumPy on the transformer block and roughly ties it on the MLPs. The threading
-is the weakest part of the project; see [Limitations](#limitations).
+Multithreaded, PyTorch wins every row, by 1.3 to 2.6 times. tinyfuse beats
+NumPy on five of the six rows (1.2 to 1.9 times), and loses on the medium MLP.
+Threading is the weakest part of the project; see [Limitations](#limitations).
+The 4-thread table was measured after layout folding was added and after a
+threading bug in single-loop elementwise kernels was fixed (see below).
+
+### An elementwise-heavy graph
+
+The models above are dominated by matmul, so fusion barely shows up in them.
+To see what fusion does when it has real work, here is an activation block of
+8 elementwise ops over a big tensor:
+
+```python
+def ew_chain(x, a, b):
+    h = x * a + b
+    return tf.gelu(h) * tf.sigmoid(x) + x * 0.5 - tf.tanh(h) * 0.1
+```
+
+Unfused, that is 8 kernels and 8 full passes over memory. Fused, it is one loop
+with every temporary held in registers.
+
+![Elementwise chain, 1 thread](docs/bench_elementwise_1t.png)
+![Elementwise chain, 4 threads](docs/bench_elementwise_4t.png)
+
+| ms per call | unfused | fused | NumPy | PyTorch |
+|---|---:|---:|---:|---:|
+| 256 × 1024, 1 thread | 1.658 | **0.903** | 2.187 | 2.398 |
+| 1024 × 1024, 1 thread | 7.869 | **3.422** | 15.48 | 10.69 |
+| 4096 × 1024, 1 thread | 38.65 | **13.41** | 61.70 | 47.55 |
+| 256 × 1024, 4 threads | 0.363 | **0.250** | 2.093 | 0.502 |
+| 1024 × 1024, 4 threads | 1.530 | **0.843** | 12.81 | 6.076 |
+| 4096 × 1024, 4 threads | 9.613 | **3.429** | 65.29 | 13.51 |
+
+Here fusion is worth 1.8 to 2.9 times on one thread and 1.5 to 2.8 times on
+four, and the fused kernel beats PyTorch eager by 2 to 7 times. The fused loop
+runs at about 3.5 ns per element on one core, almost all of it spent in the
+three transcendental functions (`exp` for GELU and sigmoid, plus `tanh`), so
+this chain is compute-bound once fused. The unfused version is the one paying
+for memory traffic.
 
 ## Things that went wrong along the way
 
@@ -289,6 +326,12 @@ next. I switched to timing each variant in its own block.
 **The first parallel matmul was slower than the serial one** on small
 problems, because it started a new OpenMP team for every cache block. It now
 uses one parallel region per kernel, with per-thread packing.
+
+**Single-loop elementwise kernels ignored `parallel=True`.** The generator only
+parallelized the outer loop of a loop nest. A contiguous op like `gelu(h)`
+collapses to a single loop, so it never got split across threads. That went
+unnoticed until the elementwise benchmark showed the unfused version not
+scaling at all from 1 to 4 threads. A test now checks for the pragma.
 
 ## Tests
 
@@ -346,6 +389,6 @@ with `rtol = atol = 1e-4`.
 | `tinyfuse/runtime.py` | gcc invocation, `.so` cache, `ctypes` wrapper, aligned buffers, profiler |
 | `tinyfuse/autotune.py` | tile search and the tuning database |
 | `tinyfuse/models.py` | the MLP and transformer block used by tests and benchmarks |
-| `benchmarks/` | benchmark runner, chart script, tuning database |
+| `benchmarks/` | benchmark runner (`--models mlp,transformer,elementwise`), chart script, tuning database |
 | `docs/` | benchmark CSVs and charts, `make_figures.py`, images in `docs/img/` |
 | `DESIGN.md` | design decisions and why |

@@ -1,0 +1,8 @@
+cpu: Intel(R) Xeon(R) Processor @ 2.80GHz
+logical cpus: 4
+threads: 1
+simd width (floats): 16
+python: 3.13.18
+numpy: 2.5.3
+torch: 2.15.0+cu132
+numpy blas: scipy-openblas

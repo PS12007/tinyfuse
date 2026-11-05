@@ -1,0 +1,13 @@
+model,config,cfg,variant,threads,rounds,median_ms,min_ms,gflops_median,unit,speedup_vs_numpy
+elementwise,256 x 1024,256x1024,tinyfuse-unfused,1,826,1.6582,1.3022,158.09,Melem/s,1.319
+elementwise,256 x 1024,256x1024,tinyfuse-fused,1,826,0.9035,0.7638,290.13,Melem/s,2.42
+elementwise,256 x 1024,256x1024,numpy,1,826,2.1865,1.8832,119.89,Melem/s,1.0
+elementwise,256 x 1024,256x1024,pytorch,1,826,2.3979,1.8121,109.32,Melem/s,0.912
+elementwise,1024 x 1024,1024x1024,tinyfuse-unfused,1,161,7.869,6.5237,133.25,Melem/s,1.967
+elementwise,1024 x 1024,1024x1024,tinyfuse-fused,1,161,3.4219,3.0983,306.43,Melem/s,4.522
+elementwise,1024 x 1024,1024x1024,numpy,1,161,15.4753,13.6289,67.76,Melem/s,1.0
+elementwise,1024 x 1024,1024x1024,pytorch,1,161,10.686,9.2466,98.13,Melem/s,1.448
+elementwise,4096 x 1024,4096x1024,tinyfuse-unfused,1,37,38.6541,35.3996,108.51,Melem/s,1.596
+elementwise,4096 x 1024,4096x1024,tinyfuse-fused,1,37,13.4127,12.2317,312.71,Melem/s,4.6
+elementwise,4096 x 1024,4096x1024,numpy,1,37,61.7044,52.5723,67.97,Melem/s,1.0
+elementwise,4096 x 1024,4096x1024,pytorch,1,37,47.5469,44.4407,88.21,Melem/s,1.298

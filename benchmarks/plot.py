@@ -61,8 +61,10 @@ def plot_model(rows, model, threads, out_png):
                         va="bottom", fontsize=8, color=TEXT2)
     ax.set_xticks(range(len(configs)))
     ax.set_xticklabels(configs, fontsize=9, color=TEXT)
-    ax.set_ylabel("GFLOP/s (median, higher is better)", fontsize=9, color=TEXT2)
-    title = {"mlp": "2-layer MLP", "transformer": "Transformer block"}[model]
+    unit = rows[0].get("unit") or "GFLOP/s"
+    ax.set_ylabel(f"{unit} (median, higher is better)", fontsize=9, color=TEXT2)
+    title = {"mlp": "2-layer MLP", "transformer": "Transformer block",
+             "elementwise": "Elementwise chain (8 ops)"}[model]
     ax.set_title(f"{title} — float32, {threads} thread{'s' if threads != '1' else ''}",
                  fontsize=11, color=TEXT, loc="left")
     ax.grid(axis="y", color=GRID, linewidth=0.8, zorder=0)

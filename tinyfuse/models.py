@@ -78,3 +78,19 @@ def random_inputs(shapes: dict, seed: int = 0, scale: float = 1.0):
             a = 1.0 + 0.1 * a
         out.append(a * scale if name == "x" else a)
     return out
+
+
+def ew_chain(x, a, b):
+    """An activation block of 8 elementwise ops (3 of them transcendental) over
+    a big tensor.  Unfused this is 8 full passes over memory; fused it is one."""
+    h = x * a + b
+    return tf.gelu(h) * tf.sigmoid(x) + x * 0.5 - tf.tanh(h) * 0.1
+
+
+def np_ew_chain(x, a, b):
+    h = x * a + b
+    return np_gelu(h) * (1.0 / (1.0 + np.exp(-x))) + x * 0.5 - np.tanh(h) * 0.1
+
+
+def ew_chain_shapes(rows, cols):
+    return dict(x=(rows, cols), a=(cols,), b=(cols,))

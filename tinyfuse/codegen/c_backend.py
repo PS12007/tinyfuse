@@ -283,7 +283,11 @@ class CodeGen:
             if d == 0 and nd > 1:
                 self.omp_for(w, numel(out))
             if d == nd - 1:
-                w("#pragma omp simd")
+                if nd == 1 and self.opts.parallel and numel(out) >= (1 << 15):
+                    # a fully merged 1-D loop: split it across threads *and* SIMD
+                    w("#pragma omp parallel for simd schedule(static)")
+                else:
+                    w("#pragma omp simd")
             w.open(f"for (long {vars_[d]} = 0; {vars_[d]} < {shape[d]}L; ++{vars_[d]})")
         in_exprs = [f"in{k}[{_index(vars_, in_strides[k])}]" for k in range(len(n.inputs))]
         stmts, res = emit_program(program, in_exprs)

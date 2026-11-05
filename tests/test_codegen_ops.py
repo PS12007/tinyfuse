@@ -237,3 +237,15 @@ def test_gelu_sigmoid_extreme_inputs():
         with np.errstate(over="ignore"):
             r = ref(x.astype(np.float64))
         assert_close(run(f, [x.shape], [x]), r)
+
+
+def test_parallel_flag_reaches_1d_elementwise_loops():
+    # contiguous elementwise ops collapse to a single loop; it must still be
+    # split across threads when parallel=True
+    opts = CodegenOptions(vector_width=VW, parallel=True)
+    f = tf.compile(lambda x: tf.gelu(x), (512, 128), options=opts)
+    assert "#pragma omp parallel for simd" in f.source
+    x = np.linspace(-3, 3, 512 * 128, dtype=np.float32).reshape(512, 128)
+    assert_close(f(x), np_gelu(x.astype(np.float64)))
+    g = tf.compile(lambda x: tf.gelu(x), (512, 128))
+    assert "omp parallel" not in g.source

@@ -411,6 +411,100 @@ class CodeGen:
         w.close()
         w.close()
 
+    def _mm_serial_body(self, w, batch_dims, a_batch, b_batch, ex_strides, epilogue):
+        BATCH = numel(batch_dims)
+        w("float* restrict Bp = scratch;")
+        w("float* restrict Ap = scratch + KB * NB;")
+        w.open(f"for (long bt = 0; bt < {BATCH}L; ++bt)")
+        w(f"const float* restrict Ab = A + {_batch_offset(a_batch, batch_dims)};")
+        w(f"const float* restrict Bb = B + {_batch_offset(b_batch, batch_dims)};")
+        w("float* restrict Cb = C + bt * (long)(M * N);")
+        for k, st in enumerate(ex_strides):
+            w(f"const float* restrict eb{k} = e{k} + {_batch_offset(st[:-2], batch_dims)};")
+        w("(void)Ab; (void)Bb;")
+        w.open("for (int j0 = 0; j0 < N; j0 += NB)")
+        w("const int nb = TF_MIN(NB, N - j0);")
+        w("const int np = (nb + NR - 1) / NR;")
+        w.open("for (int k0 = 0; k0 < K; k0 += KB)")
+        w("const int kb = TF_MIN(KB, K - k0);")
+        w("const int last = (k0 + KB >= K); (void)last;")
+        w.open("for (int pp = 0; pp < np; ++pp)")
+        self._mm_pack_b(w, "pp")
+        w.close()
+        w.open("for (int i0 = 0; i0 < M; i0 += MB)")
+        w("const int mb = TF_MIN(MB, M - i0);")
+        w("const int mp = (mb + MR - 1) / MR;")
+        self._mm_pack_a(w)
+        w.open("for (int q = 0; q < mp; ++q)")
+        w.open("for (int p = 0; p < np; ++p)")
+        self._mm_microtile(w)
+        w.close()
+        w.close()
+        if epilogue:
+            # Applied once per finished MB x NB block, while it is still in L2.
+            # (Measured equal to applying it per micro-tile, and it keeps the
+            # micro-kernel loop body minimal.)
+            w.open("if (last)")
+            self._mm_epilogue(w, epilogue, ex_strides, "j0", "j0 + nb")
+            w.close()
+        w.close()  # i0
+        w.close()  # k0
+        w.close()  # j0
+        w.close()  # bt
+        w.close()  # fn
+
+    def _mm_parallel_body(self, w, BATCH, batch_dims, a_batch, b_batch, ex_strides,
+                          epilogue, nthreads, grp):
+        """Barrier-free OpenMP matmul.  A unit = (batch, column block, group of
+        ``grp`` row blocks) is computed start to finish by one thread, which
+        packs B once per K block for the whole group and A per row block, in
+        a private scratch slice.  No synchronisation until the kernel ends."""
+        w(f"const int nt = TF_MIN(omp_get_max_threads(), {nthreads});")
+        w(f"const int NIB = (M + MB - 1) / MB, NJB = (N + NB - 1) / NB, GRP = {grp};")
+        w("const int NG = (NIB + GRP - 1) / GRP;")
+        w("#pragma omp parallel num_threads(nt)")
+        w.open("")
+        w("float* restrict Bp = scratch + (long)omp_get_thread_num() * (KB * NB + MB * KB);")
+        w("float* restrict Ap = Bp + KB * NB;")
+        w("#pragma omp for collapse(3) schedule(static)")
+        w.open(f"for (long bt = 0; bt < {BATCH}L; ++bt)")
+        w.open("for (int jb = 0; jb < NJB; ++jb)")
+        w.open("for (int g = 0; g < NG; ++g)")
+        w(f"const float* restrict Ab = A + {_batch_offset(a_batch, batch_dims)};")
+        w(f"const float* restrict Bb = B + {_batch_offset(b_batch, batch_dims)};")
+        w("float* restrict Cb = C + bt * (long)(M * N);")
+        for k, st in enumerate(ex_strides):
+            w(f"const float* restrict eb{k} = e{k} + {_batch_offset(st[:-2], batch_dims)};")
+        w("(void)Ab; (void)Bb;")
+        w("const int j0 = jb * NB;")
+        w("const int nb = TF_MIN(NB, N - j0), np = (nb + NR - 1) / NR;")
+        w("const int ib_end = TF_MIN((g + 1) * GRP, NIB);")
+        w.open("for (int k0 = 0; k0 < K; k0 += KB)")
+        w("const int kb = TF_MIN(KB, K - k0);")
+        w("const int last = (k0 + KB >= K); (void)last;")
+        w.open("for (int pp = 0; pp < np; ++pp)")
+        self._mm_pack_b(w, "pp")
+        w.close()
+        w.open("for (int ib = g * GRP; ib < ib_end; ++ib)")
+        w("const int i0 = ib * MB;")
+        w("const int mb = TF_MIN(MB, M - i0), mp = (mb + MR - 1) / MR;")
+        self._mm_pack_a(w)
+        w.open("for (int q = 0; q < mp; ++q)")
+        w.open("for (int p = 0; p < np; ++p)")
+        self._mm_microtile(w)
+        w.close()
+        w.close()
+        if epilogue:
+            w.open("if (last)")
+            self._mm_epilogue(w, epilogue, ex_strides, "j0", "j0 + nb")
+            w.close()
+        w.close()  # ib
+        w.close()  # k0
+        w.close()  # g
+        w.close()  # jb
+        w.close()  # bt
+        w.close()  # parallel region
+
     def gen_matmul(self, n: Node, name: str) -> Kernel:
         a, b = n.inputs[0], n.inputs[1]
         extra = n.inputs[2:]
@@ -434,7 +528,15 @@ class CodeGen:
         NR = NV * vw
         par = self.opts.parallel
         nthreads = max(1, self.opts.max_threads) if par else 1
-        scratch = KB * NB + nthreads * MB * KB
+        if par:
+            # barrier-free decomposition: units = (batch, column block, row block);
+            # shrink NB until there are >= 2 units per thread (when N allows it)
+            nib = -(-M // MB)
+            while BATCH * nib * -(-N // NB) < 2 * nthreads and NB > NR:
+                NB = max(NR, (NB // 2) // NR * NR)
+            scratch = nthreads * (KB * NB + MB * KB)
+        else:
+            scratch = KB * NB + MB * KB
 
         ex_strides = [list(broadcast_strides(e.shape, out)) for e in extra]
 
@@ -449,82 +551,17 @@ class CodeGen:
           f"MR = {MR}, NV = {NV}, NR = {NR}, VW = {vw} }};")
         w(f"const long SAM = {SAM}L, SAK = {SAK}L, SBK = {SBK}L, SBN = {SBN}L;  "
           f"/* operand strides (views) */")
-        w("float* restrict Bp = scratch;")
         if par:
-            # One parallel region per kernel.  Work units are (row block, B
-            # panel) pairs; each thread packs A into its own scratch slice and
-            # skips repacking while consecutive units share a row block.
-            w(f"const int nt = TF_MIN(omp_get_max_threads(), {nthreads});")
-            w("#pragma omp parallel num_threads(nt)")
-            w.open("")
-            w("float* restrict Ap = scratch + KB * NB + (long)omp_get_thread_num() * MB * KB;")
+            # group row blocks per unit so B is packed once per group, keeping
+            # >= 2 units per thread where possible
+            nib, njb = -(-M // MB), -(-N // NB)
+            grp = max(1, (BATCH * nib * njb) // (2 * nthreads))
+            grp = min(grp, nib)
+            self._mm_parallel_body(w, BATCH, batch_dims, a_batch, b_batch, ex_strides,
+                                   epilogue, nthreads, grp)
+            w.close()  # fn
         else:
-            w("float* restrict Ap = scratch + KB * NB;")
-        w.open(f"for (long bt = 0; bt < {BATCH}L; ++bt)")
-        w(f"const float* restrict Ab = A + {_batch_offset(a_batch, batch_dims)};")
-        w(f"const float* restrict Bb = B + {_batch_offset(b_batch, batch_dims)};")
-        w("float* restrict Cb = C + bt * (long)(M * N);")
-        for k, st in enumerate(ex_strides):
-            w(f"const float* restrict eb{k} = e{k} + {_batch_offset(st[:-2], batch_dims)};")
-        w("(void)Ab; (void)Bb;")
-        w.open("for (int j0 = 0; j0 < N; j0 += NB)")
-        w("const int nb = TF_MIN(NB, N - j0);")
-        w("const int np = (nb + NR - 1) / NR;")
-        w.open("for (int k0 = 0; k0 < K; k0 += KB)")
-        w("const int kb = TF_MIN(KB, K - k0);")
-        w("const int last = (k0 + KB >= K); (void)last;")
-        if par:
-            w("#pragma omp for schedule(static)")
-        w.open("for (int pp = 0; pp < np; ++pp)")
-        self._mm_pack_b(w, "pp")
-        w.close()
-        if par:
-            w("const int nib = (M + MB - 1) / MB;")
-            w("int packed = -1;")
-            w("#pragma omp for collapse(2) schedule(static)")
-            w.open("for (int ib = 0; ib < nib; ++ib)")
-            w.open("for (int p = 0; p < np; ++p)")
-            w("const int i0 = ib * MB;")
-            w("const int mb = TF_MIN(MB, M - i0);")
-            w("const int mp = (mb + MR - 1) / MR;")
-            w.open("if (packed != ib)")
-            self._mm_pack_a(w)
-            w("packed = ib;")
-            w.close()
-            w.open("for (int q = 0; q < mp; ++q)")
-            self._mm_microtile(w)
-            w.close()
-            if epilogue:
-                w.open("if (last)")
-                self._mm_epilogue(w, epilogue, ex_strides, "j0 + p * NR",
-                                  "j0 + p * NR + TF_MIN(NR, N - j0 - p * NR)")
-                w.close()
-            w.close()  # p
-            w.close()  # ib
-        else:
-            w.open("for (int i0 = 0; i0 < M; i0 += MB)")
-            w("const int mb = TF_MIN(MB, M - i0);")
-            w("const int mp = (mb + MR - 1) / MR;")
-            self._mm_pack_a(w)
-            w.open("for (int q = 0; q < mp; ++q)")
-            w.open("for (int p = 0; p < np; ++p)")
-            self._mm_microtile(w)
-            w.close()
-            w.close()
-            if epilogue:
-                # Applied once per finished MB x NB block, while it is still in L2.
-                # (Measured equal to applying it per micro-tile, and it keeps the
-                # micro-kernel loop body minimal.)
-                w.open("if (last)")
-                self._mm_epilogue(w, epilogue, ex_strides, "j0", "j0 + nb")
-                w.close()
-            w.close()  # i0
-        w.close()  # k0
-        w.close()  # j0
-        w.close()  # bt
-        if par:
-            w.close()  # parallel region
-        w.close()  # fn
+            self._mm_serial_body(w, batch_dims, a_batch, b_batch, ex_strides, epilogue)
         args = [self.buf(a), self.buf(b), self.buf(n)] + [self.buf(e) for e in extra] + ["scratch"]
         return Kernel(name, w.text(), args, scratch=scratch)
 

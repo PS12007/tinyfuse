@@ -8,9 +8,12 @@ Methodology
   with OpenMP only when --threads > 1.
 * Every variant's output is checked against NumPy (float64) at 1e-4 before
   any timing.
-* Variants are timed *interleaved*: each round calls every variant once, for
-  many rounds, so slow drifts in machine load hit all variants equally.  We
-  report the median and the minimum per-call time; charts use the median.
+* Single-threaded, variants are timed *interleaved*: each round calls every
+  variant once, for many rounds, so slow drifts in machine load hit all
+  variants equally.  With several threads, interleaving makes the thread pools
+  of different runtimes fight for cores, so variants are timed in separate
+  warmed-up blocks instead (3 passes).  We report the median and the minimum
+  per-call time; charts use the median.
 
 Usage::
 
@@ -39,7 +42,11 @@ def main(argv=None):
     ap.add_argument("--budget", type=float, default=6.0, help="seconds per config")
     ap.add_argument("--no-tune", action="store_true")
     ap.add_argument("--quick", action="store_true", help="smallest sizes only")
+    ap.add_argument("--blocked", action="store_true", default=None,
+                    help="time each variant in its own block (default when --threads > 1)")
     a = ap.parse_args(argv)
+    if a.blocked is None:
+        a.blocked = a.threads > 1
     _pin_threads(a.threads)
 
     import csv
@@ -136,25 +143,45 @@ def main(argv=None):
             out = out.numpy() if hasattr(out, "numpy") else out
             np.testing.assert_allclose(out, ref, rtol=1e-4, atol=1e-4, err_msg=name)
 
-        # warmup
-        for f in variants.values():
-            for _ in range(3):
-                f(*xs)
         times = {k: [] for k in variants}
-        t_start = time.perf_counter()
-        r = 0
-        while True:
-            for name, f in variants.items():
-                t = time.perf_counter()
-                f(*xs)
-                times[name].append(time.perf_counter() - t)
-            r += 1
-            if a.rounds and r >= a.rounds:
-                break
-            if not a.rounds and (time.perf_counter() - t_start > a.budget and r >= 10):
-                break
+        if not a.blocked:
+            # interleaved: one call per variant per round
+            for f in variants.values():
+                for _ in range(3):
+                    f(*xs)
+            t_start = time.perf_counter()
+            r = 0
+            while True:
+                for name, f in variants.items():
+                    t = time.perf_counter()
+                    f(*xs)
+                    times[name].append(time.perf_counter() - t)
+                r += 1
+                if a.rounds and r >= a.rounds:
+                    break
+                if not a.rounds and (time.perf_counter() - t_start > a.budget and r >= 10):
+                    break
+        else:
+            # blocked: with several threads, interleaving makes the thread pools
+            # of different runtimes (OpenMP, OpenBLAS, torch) fight each other;
+            # instead each variant runs alone in a warmed-up block, and the
+            # blocks are repeated in 3 passes to spread machine drift.
+            per = a.budget / (3 * len(variants))
+            for _ in range(3):
+                for name, f in variants.items():
+                    for _ in range(3):
+                        f(*xs)
+                    t_end = time.perf_counter() + per
+                    n = 0
+                    while n < 5 or time.perf_counter() < t_end:
+                        t = time.perf_counter()
+                        f(*xs)
+                        times[name].append(time.perf_counter() - t)
+                        n += 1
+                    time.sleep(0.05)
+            r = min(len(v) for v in times.values())
         np_med = float(np.median(times["numpy"]))
-        print(f"\n{model} {label}  ({r} rounds, compile {compile_s:.1f}s, {a.threads} thread(s))")
+        print(f"\n{model} {label}  ({'blocked' if a.blocked else 'interleaved'}, {r} rounds, compile {compile_s:.1f}s, {a.threads} thread(s))")
         for name, ts in times.items():
             med, mn = float(np.median(ts)), float(np.min(ts))
             rows.append(dict(model=model, config=label, cfg="x".join(map(str, cfg)),

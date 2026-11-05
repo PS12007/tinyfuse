@@ -21,8 +21,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 # Fixed variant -> colour mapping (validated categorical palette, light mode).
 VARIANTS = OrderedDict([
-    ("tinyfuse-fused", "#2a78d6"),
     ("tinyfuse-unfused", "#eb6834"),
+    ("tinyfuse-fused", "#2a78d6"),
     ("tinyfuse-fused+tuned", "#1baf7a"),
     ("numpy", "#eda100"),
     ("pytorch", "#e87ba4"),

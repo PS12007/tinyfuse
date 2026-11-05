@@ -75,3 +75,21 @@ def test_against_pytorch_if_available():
     x = x + o @ wo + bo
     y = x + F.gelu(F.layer_norm(x, (32,), g2, be2, 1e-5) @ w1 + b1, approximate="tanh") @ w2 + b2
     assert_close(f(*xs), y.numpy())
+
+
+@pytest.mark.parametrize("threads", [2, 4])
+def test_parallel_builds_match(threads):
+    blk, npb, sh = make_transformer_block(33, 48, 3, 100)
+    xs = random_inputs(sh, seed=5)
+    ref = npb(*[x.astype(np.float64) for x in xs])
+    for tile in (None, MatmulTile(mb=6, nb=VW, kb=7, mr=3, nv=1)):
+        opts = CodegenOptions(vector_width=VW, parallel=True, max_threads=threads,
+                              default_tile=tile)
+        f = tf.compile(blk, options=opts, **sh)
+        for _ in range(3):   # repeated calls: no stale state between runs
+            assert_close(f(*xs), ref)
+    sh2 = mlp2_shapes(37, 70, 130, 9)
+    xs2 = random_inputs(sh2, seed=6)
+    f = tf.compile(mlp2, options=CodegenOptions(vector_width=VW, parallel=True,
+                                                max_threads=threads), **sh2)
+    assert_close(f(*xs2), np_mlp2(*[x.astype(np.float64) for x in xs2]))

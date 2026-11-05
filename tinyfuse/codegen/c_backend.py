@@ -14,6 +14,7 @@ The whole graph becomes one C translation unit:
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -52,6 +53,8 @@ class CodegenOptions:
     tiles: Dict[Tuple[int, int, int, int], MatmulTile] = field(default_factory=dict)
     parallel: bool = False          # OpenMP parallel loops
     profile: bool = False           # time every kernel call (see CompiledModule.profile)
+    # upper bound on OpenMP threads per matmul (sizes per-thread packing scratch)
+    max_threads: int = field(default_factory=lambda: os.cpu_count() or 1)
 
     def tile_for(self, batch, m, n, k, epilogue: str = "") -> MatmulTile:
         t = self.tiles.get((batch, m, n, k, epilogue)) or self.tiles.get((batch, m, n, k))
@@ -281,59 +284,11 @@ class CodeGen:
         return Kernel(name, w.text(), [self.buf(i) for i in n.inputs] + [self.buf(n)])
 
     # ---- matmul (+ fused epilogue) -----------------------------------------
-    def gen_matmul(self, n: Node, name: str) -> Kernel:
-        a, b = n.inputs[0], n.inputs[1]
-        extra = n.inputs[2:]
-        epilogue = n.attrs.get("epilogue") if n.op == "fused_matmul" else None
-        out = n.shape
-        M, K = a.shape[-2], a.shape[-1]
-        N = b.shape[-1]
-        batch_dims = out[:-2]
-        BATCH = numel(batch_dims)
-        b_stride = K * N if len(b.shape) > 2 else 0
-        vw = self.vw
-        t = clamp_tile(self.opts.tile_for(BATCH, M, N, K, epilogue_signature(n)), M, N, K, vw)
-        MB, NB, KB, MR, NV = t.key()
-        NR = NV * vw
-        scratch = KB * NB + MB * KB
-
-        ex_strides = [list(broadcast_strides(e.shape, out)) for e in extra]
-
-        w = Writer()
-        params = ["const float* restrict A", "const float* restrict B", "float* restrict C"]
-        params += [f"const float* restrict e{k}" for k in range(len(extra))]
-        params += ["float* restrict scratch"]
-        w(f"/* {n.op} [{BATCH}x] {M}x{K} @ {K}x{N}  tile mb={MB} nb={NB} kb={KB} "
-          f"mr={MR} nr={NR} */")
-        w.open(f"static void {name}({', '.join(params)})")
-        w(f"enum {{ M = {M}, N = {N}, K = {K}, MB = {MB}, NB = {NB}, KB = {KB}, "
-          f"MR = {MR}, NV = {NV}, NR = {NR}, VW = {vw} }};")
-        w("float* restrict Bp = scratch;")
-        w("float* restrict Ap = scratch + KB * NB;")
-        w.open(f"for (long bt = 0; bt < {BATCH}L; ++bt)")
-        w("const float* restrict Ab = A + bt * (long)(M * K);")
-        w(f"const float* restrict Bb = B + bt * {b_stride}L;")
-        w("float* restrict Cb = C + bt * (long)(M * N);")
-        # batch offsets for epilogue inputs
-        for k, st in enumerate(ex_strides):
-            terms = []
-            rem = 1
-            for d in range(len(batch_dims) - 1, -1, -1):
-                if st[d]:
-                    terms.append(f"((bt / {rem}L) % {batch_dims[d]}L) * {st[d]}L")
-                rem *= batch_dims[d]
-            w(f"const float* restrict eb{k} = e{k} + {' + '.join(terms) if terms else '0'};")
-        w("(void)Ab; (void)Bb;")
-        w.open("for (int j0 = 0; j0 < N; j0 += NB)")
-        w("const int nb = TF_MIN(NB, N - j0);")
-        w("const int np = (nb + NR - 1) / NR;")
-        w.open("for (int k0 = 0; k0 < K; k0 += KB)")
-        w("const int kb = TF_MIN(KB, K - k0);")
-        w("const int last = (k0 + KB >= K);")
-        w("/* pack B[k0:k0+kb, j0:j0+nb] into zero-padded [kb][NR] panels */")
-        if self.opts.parallel:
-            w("#pragma omp parallel for schedule(static) if(np > 1)")
-        w.open("for (int p = 0; p < np; ++p)")
+    @staticmethod
+    def _mm_pack_b(w: Writer, p_expr: str):
+        """Pack B[k0:k0+kb, panel p] into a zero-padded [kb][NR] panel."""
+        w.open("")
+        w(f"const int p = {p_expr};")
         w("float* restrict dst = Bp + (long)p * kb * NR;")
         w("const int jj = j0 + p * NR;")
         w("const int wdt = TF_MIN(NR, N - jj);")
@@ -348,10 +303,10 @@ class CodeGen:
         w.close()
         w.close()
         w.close()
-        w.open("for (int i0 = 0; i0 < M; i0 += MB)")
-        w("const int mb = TF_MIN(MB, M - i0);")
-        w("const int mp = (mb + MR - 1) / MR;")
-        w("/* pack A[i0:i0+mb, k0:k0+kb] into zero-padded [kb][MR] panels */")
+
+    @staticmethod
+    def _mm_pack_a(w: Writer):
+        """Pack A[i0:i0+mb, k0:k0+kb] into mp zero-padded [kb][MR] panels at Ap."""
         w.open("for (int q = 0; q < mp; ++q)")
         w("float* restrict dst = Ap + (long)q * kb * MR;")
         w("const int ii = i0 + q * MR;")
@@ -366,11 +321,11 @@ class CodeGen:
         w.close()
         w.close()
         w.close()
-        if self.opts.parallel:
-            # every (q, p) micro-tile writes a disjoint block of C
-            w("#pragma omp parallel for collapse(2) schedule(static) if(mp * np > 1)")
-        w.open("for (int q = 0; q < mp; ++q)")
-        w.open("for (int p = 0; p < np; ++p)")
+
+    @staticmethod
+    def _mm_microtile(w: Writer):
+        """C[ii:ii+MR, jj:jj+NR] (+)= Ap panel q x Bp panel p, accumulators in
+        registers; partial tiles go through a small temporary."""
         w("const int ii = i0 + q * MR;")
         w("const int hgt = TF_MIN(MR, M - ii);")
         w("const float* restrict ap = Ap + (long)q * kb * MR;")
@@ -380,7 +335,6 @@ class CodeGen:
         w("const int full = (hgt == MR) && (wdt == NR);")
         w("tf_vf acc[MR][NV];")
         w("float tmp[MR * NR] __attribute__((aligned(64)));")
-        # init accumulators
         w.open("if (k0 == 0)")
         w("#pragma GCC unroll 16")
         w("for (int r = 0; r < MR; ++r)")
@@ -398,7 +352,6 @@ class CodeGen:
         w("for (int r = 0; r < MR; ++r)")
         w("    for (int v = 0; v < NV; ++v) acc[r][v] = *(const tf_vf*)(tmp + r * NR + v * VW);")
         w.close()
-        # micro-kernel
         w.open("for (int k = 0; k < kb; ++k)")
         w("tf_vf bv[NV];")
         w("#pragma GCC unroll 8")
@@ -410,7 +363,6 @@ class CodeGen:
         w("for (int v = 0; v < NV; ++v) acc[r][v] += av * bv[v];")
         w.close()
         w.close()
-        # store
         w.open("if (full)")
         w("#pragma GCC unroll 16")
         w("for (int r = 0; r < MR; ++r)")
@@ -422,33 +374,133 @@ class CodeGen:
         w("for (int r = 0; r < hgt; ++r)")
         w("    for (int c = 0; c < wdt; ++c) Cb[(long)(ii + r) * N + jj + c] = tmp[r * NR + c];")
         w.close()
-        w.close()  # p
-        w.close()  # q
-        if epilogue:
-            # Applied once per finished MB x NB block, while it is still in L2.
-            # (Measured equal to applying it per micro-tile, and it keeps the
-            # micro-kernel loop body minimal.)
-            w("/* fused epilogue on the finished cache block */")
-            w.open("if (last)")
-            if self.opts.parallel:
-                w("#pragma omp parallel for schedule(static) if(mb > 8)")
-            w.open("for (int r = 0; r < mb; ++r)")
-            w("const long i = i0 + r;")
-            w("float* restrict crow = Cb + i * N;")
-            w("#pragma omp simd")
-            w.open("for (long j = j0; j < j0 + nb; ++j)")
-            in_exprs = [f"eb{k}[{_index(['i', 'j'], st[-2:])}]" for k, st in enumerate(ex_strides)]
-            stmts, res = emit_program(epilogue, in_exprs, acc_expr="crow[j]")
-            for s_ in stmts:
-                w(s_)
-            w(f"crow[j] = {res};")
+
+    @staticmethod
+    def _mm_epilogue(w: Writer, epilogue, ex_strides, col_lo: str, col_hi: str):
+        """Apply the epilogue to rows i0..i0+mb, columns [col_lo, col_hi)."""
+        w.open("for (int r = 0; r < mb; ++r)")
+        w("const long i = i0 + r;")
+        w("float* restrict crow = Cb + i * N;")
+        w("#pragma omp simd")
+        w.open(f"for (long j = {col_lo}; j < {col_hi}; ++j)")
+        in_exprs = [f"eb{k}[{_index(['i', 'j'], st[-2:])}]" for k, st in enumerate(ex_strides)]
+        stmts, res = emit_program(epilogue, in_exprs, acc_expr="crow[j]")
+        for s_ in stmts:
+            w(s_)
+        w(f"crow[j] = {res};")
+        w.close()
+        w.close()
+
+    def gen_matmul(self, n: Node, name: str) -> Kernel:
+        a, b = n.inputs[0], n.inputs[1]
+        extra = n.inputs[2:]
+        epilogue = n.attrs.get("epilogue") if n.op == "fused_matmul" else None
+        out = n.shape
+        M, K = a.shape[-2], a.shape[-1]
+        N = b.shape[-1]
+        batch_dims = out[:-2]
+        BATCH = numel(batch_dims)
+        b_stride = K * N if len(b.shape) > 2 else 0
+        vw = self.vw
+        t = clamp_tile(self.opts.tile_for(BATCH, M, N, K, epilogue_signature(n)), M, N, K, vw)
+        MB, NB, KB, MR, NV = t.key()
+        NR = NV * vw
+        par = self.opts.parallel
+        nthreads = max(1, self.opts.max_threads) if par else 1
+        scratch = KB * NB + nthreads * MB * KB
+
+        ex_strides = [list(broadcast_strides(e.shape, out)) for e in extra]
+
+        w = Writer()
+        params = ["const float* restrict A", "const float* restrict B", "float* restrict C"]
+        params += [f"const float* restrict e{k}" for k in range(len(extra))]
+        params += ["float* restrict scratch"]
+        w(f"/* {n.op} [{BATCH}x] {M}x{K} @ {K}x{N}  tile mb={MB} nb={NB} kb={KB} "
+          f"mr={MR} nr={NR}{' parallel' if par else ''} */")
+        w.open(f"static void {name}({', '.join(params)})")
+        w(f"enum {{ M = {M}, N = {N}, K = {K}, MB = {MB}, NB = {NB}, KB = {KB}, "
+          f"MR = {MR}, NV = {NV}, NR = {NR}, VW = {vw} }};")
+        w("float* restrict Bp = scratch;")
+        if par:
+            # One parallel region per kernel.  Work units are (row block, B
+            # panel) pairs; each thread packs A into its own scratch slice and
+            # skips repacking while consecutive units share a row block.
+            w(f"const int nt = TF_MIN(omp_get_max_threads(), {nthreads});")
+            w("#pragma omp parallel num_threads(nt)")
+            w.open("")
+            w("float* restrict Ap = scratch + KB * NB + (long)omp_get_thread_num() * MB * KB;")
+        else:
+            w("float* restrict Ap = scratch + KB * NB;")
+        w.open(f"for (long bt = 0; bt < {BATCH}L; ++bt)")
+        w("const float* restrict Ab = A + bt * (long)(M * K);")
+        w(f"const float* restrict Bb = B + bt * {b_stride}L;")
+        w("float* restrict Cb = C + bt * (long)(M * N);")
+        for k, st in enumerate(ex_strides):
+            terms = []
+            rem = 1
+            for d in range(len(batch_dims) - 1, -1, -1):
+                if st[d]:
+                    terms.append(f"((bt / {rem}L) % {batch_dims[d]}L) * {st[d]}L")
+                rem *= batch_dims[d]
+            w(f"const float* restrict eb{k} = e{k} + {' + '.join(terms) if terms else '0'};")
+        w("(void)Ab; (void)Bb;")
+        w.open("for (int j0 = 0; j0 < N; j0 += NB)")
+        w("const int nb = TF_MIN(NB, N - j0);")
+        w("const int np = (nb + NR - 1) / NR;")
+        w.open("for (int k0 = 0; k0 < K; k0 += KB)")
+        w("const int kb = TF_MIN(KB, K - k0);")
+        w("const int last = (k0 + KB >= K); (void)last;")
+        if par:
+            w("#pragma omp for schedule(static)")
+        w.open("for (int pp = 0; pp < np; ++pp)")
+        self._mm_pack_b(w, "pp")
+        w.close()
+        if par:
+            w("const int nib = (M + MB - 1) / MB;")
+            w("int packed = -1;")
+            w("#pragma omp for collapse(2) schedule(static)")
+            w.open("for (int ib = 0; ib < nib; ++ib)")
+            w.open("for (int p = 0; p < np; ++p)")
+            w("const int i0 = ib * MB;")
+            w("const int mb = TF_MIN(MB, M - i0);")
+            w("const int mp = (mb + MR - 1) / MR;")
+            w.open("if (packed != ib)")
+            self._mm_pack_a(w)
+            w("packed = ib;")
+            w.close()
+            w.open("for (int q = 0; q < mp; ++q)")
+            self._mm_microtile(w)
+            w.close()
+            if epilogue:
+                w.open("if (last)")
+                self._mm_epilogue(w, epilogue, ex_strides, "j0 + p * NR",
+                                  "j0 + p * NR + TF_MIN(NR, N - j0 - p * NR)")
+                w.close()
+            w.close()  # p
+            w.close()  # ib
+        else:
+            w.open("for (int i0 = 0; i0 < M; i0 += MB)")
+            w("const int mb = TF_MIN(MB, M - i0);")
+            w("const int mp = (mb + MR - 1) / MR;")
+            self._mm_pack_a(w)
+            w.open("for (int q = 0; q < mp; ++q)")
+            w.open("for (int p = 0; p < np; ++p)")
+            self._mm_microtile(w)
             w.close()
             w.close()
-            w.close()
-        w.close()  # i0
+            if epilogue:
+                # Applied once per finished MB x NB block, while it is still in L2.
+                # (Measured equal to applying it per micro-tile, and it keeps the
+                # micro-kernel loop body minimal.)
+                w.open("if (last)")
+                self._mm_epilogue(w, epilogue, ex_strides, "j0", "j0 + nb")
+                w.close()
+            w.close()  # i0
         w.close()  # k0
         w.close()  # j0
         w.close()  # bt
+        if par:
+            w.close()  # parallel region
         w.close()  # fn
         args = [self.buf(a), self.buf(b), self.buf(n)] + [self.buf(e) for e in extra] + ["scratch"]
         return Kernel(name, w.text(), args, scratch=scratch)
@@ -623,7 +675,8 @@ def generate_c(g: Graph, opts: Optional[CodegenOptions] = None,
     if opts.profile:
         prof = (f"#include <time.h>\nstatic double tf_prof[{max(len(kernels), 1)}];\n"
                 "double* tf_profile_data(void) { return tf_prof; }\n")
-    src = (f"#define TF_VW {opts.vector_width}\n" + PRELUDE + prof + "\n" +
+    omp = "#include <omp.h>\n" if opts.parallel else ""
+    src = (f"#define TF_VW {opts.vector_width}\n" + PRELUDE + omp + prof + "\n" +
            "\n\n".join(k.source for k in kernels) + "\n\n" + w.text() + "\n")
     consts = [c.attrs["value"] for c in plan.consts]
     return GeneratedModule(src, g, plan, n_in, n_out, consts, ws_total, kernels)

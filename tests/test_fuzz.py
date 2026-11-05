@@ -61,7 +61,9 @@ def test_random_graphs(seed):
     xs = [rng.standard_normal(s).astype(np.float32) for s in shapes]
     ref = tf.run_graph(g, xs)
     tiny = CodegenOptions(vector_width=VW, default_tile=MatmulTile(mb=3, nb=VW, kb=2, mr=3, nv=1))
-    for pipeline, opts in [("none", None), ("fused", None), ("fused", tiny)]:
+    tiny_par = CodegenOptions(vector_width=VW, parallel=True, max_threads=3,
+                              default_tile=MatmulTile(mb=3, nb=VW, kb=2, mr=3, nv=1))
+    for pipeline, opts in [("none", None), ("fused", None), ("fused", tiny), ("fused", tiny_par)]:
         # re-trace: the random program consumes its rng while tracing
         fn2, _ = random_program(seed)
         f = tf.compile(fn2, *shapes, pipeline=pipeline, options=opts)

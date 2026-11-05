@@ -22,7 +22,7 @@ y = f(x, w1, b1, w2, b2)  # NumPy arrays in, NumPy arrays out
 * Ops: `matmul` (2-D and batched), `add`, `sub`, `mul`, `div`, `maximum`, `relu`,
   `gelu`, `sigmoid`, `tanh`, `exp`, `neg`, `softmax`, `layernorm`, `reshape`,
   `transpose`.
-* 264 tests. Every op, a 2-layer MLP and a transformer block are checked against
+* 266 tests. Every op, a 2-layer MLP and a transformer block are checked against
   NumPy at `rtol = atol = 1e-4`, plus randomized differential fuzzing.
 * Single-threaded, it is **1.2–1.7× faster than NumPy/OpenBLAS** on these
   models, and on par with or faster than PyTorch eager on the transformer
@@ -170,7 +170,7 @@ pip install numpy pytest          # + matplotlib torch for the benchmarks
 ```
 
 ```bash
-python -m pytest -q               # 264 tests, ~20 s (first run compiles C)
+python -m pytest -q               # 266 tests, ~20 s (first run compiles C)
 ```
 
 ```bash

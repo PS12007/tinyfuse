@@ -43,7 +43,7 @@ print(f.source)      # the generated C
 y = f(x, w1, b1, w2, b2)   # NumPy arrays in, NumPy arrays out
 ```
 
-Run the tests (329 of them, about 20 seconds; the first run spends most of
+Run the tests (331 of them, about 20 seconds; the first run spends most of
 that compiling C):
 
 ```bash
@@ -65,7 +65,7 @@ python benchmarks/run_benchmarks.py --threads 1
 ```
 
 ```bash
-python -m tinyfuse.autotune --shape 256x1024x4096 --db my_tuning.json
+python -m tinyfuse.autotune --shape 256x1024x4096 --threads 4 --db my_tuning.json
 ```
 
 ```bash
@@ -203,9 +203,9 @@ SIMD reductions. Transpose is either a vectorized row copy or a 32×32 tiled
 copy. Reshape compiles to nothing.
 
 The tile sizes can be autotuned. For each matmul shape, including its
-epilogue, the tuner times up to 32 candidate tiles, re-times the best few
-against the default (interleaved, to cancel out noise), and stores the winner
-in `benchmarks/tuning.json`.
+epilogue, and each thread count, the tuner times up to 32 candidate tiles,
+re-times the best few against the default (interleaved, to cancel out noise),
+and stores the winner in `benchmarks/tuning.json`.
 
 ### 4. Memory
 
@@ -274,18 +274,20 @@ OpenBLAS and PyTorch's) kept fighting each other for the 4 cores.
 
 | ms per call, 4 threads | unfused | fused | fused+tuned | NumPy | PyTorch |
 |---|---:|---:|---:|---:|---:|
-| MLP 16 × 256→1024→256 | 0.163 | 0.151 | 0.129 | 0.196 | **0.101** |
-| MLP 64 × 512→2048→512 | 1.150 | 1.159 | 1.271 | 1.404 | **0.810** |
-| MLP 256 × 1024→4096→1024 | 14.93 | 15.09 | 14.12 | 17.30 | **10.84** |
-| Transformer seq 64, d 256 | 0.823 | **0.766** | 0.786 | 1.329 | 0.862 |
-| Transformer seq 128, d 512 | 3.810 | 3.811 | 4.345 | 8.669 | **2.865** |
-| Transformer seq 256, d 768 | 18.42 | 17.20 | 15.44 | 26.65 | **11.02** |
+| MLP 16 × 256→1024→256 | 0.176 | 0.161 | 0.148 | 0.243 | **0.114** |
+| MLP 64 × 512→2048→512 | 1.304 | 1.173 | 1.042 | 1.304 | **0.832** |
+| MLP 256 × 1024→4096→1024 | 13.88 | 13.45 | 13.28 | 15.88 | **10.50** |
+| Transformer seq 64, d 256 | 0.813 | **0.727** | 0.744 | 1.371 | 0.803 |
+| Transformer seq 128, d 512 | 4.173 | 3.796 | 3.505 | 8.625 | **3.044** |
+| Transformer seq 256, d 768 | 20.18 | 18.03 | 16.09 | 27.53 | **11.58** |
 
-At 4 threads tinyfuse beats NumPy on every row (1.2 to 2.3 times) and beats
+At 4 threads tinyfuse beats NumPy on every row (1.1 to 2.5 times) and beats
 PyTorch on the smallest transformer. PyTorch is ahead on the other five, by
-1.3 to 1.6 times. That gap used to be up to 2.6 times. Most of the
-improvement came from rewriting the parallel matmul so threads never wait on
-each other (see [Things that went wrong](#things-that-went-wrong-along-the-way)).
+1.15 to 1.4 times against tinyfuse with tiles tuned for 4 threads. Two
+changes closed most of a gap that used to reach 2.6 times. The parallel
+matmul was rewritten so threads never wait on each other (see
+[Things that went wrong](#things-that-went-wrong-along-the-way)). And the
+autotuner now tunes on the same number of threads the kernel will run with.
 
 ### An elementwise-heavy graph
 
@@ -394,8 +396,7 @@ with `rtol = atol = 1e-4`.
   constants. It is tuned for AVX-512; AVX2 machines run the same code with
   much less tuning behind it.
 * Threading is basic. There is one fork/join per kernel rather than one per
-  graph, no NUMA awareness, and the autotuner only tunes single-threaded. A
-  compiled function is not safe to call from several threads at once, because
+  graph, and no NUMA awareness. A compiled function is not safe to call from several threads at once, because
   its workspace is shared.
 * The C is built with `-ffast-math`, which glibc needs before it will use its
   vectorized `expf`/`tanhf`. Results can differ from NumPy in the last few bits,

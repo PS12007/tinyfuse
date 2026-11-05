@@ -313,5 +313,11 @@ objects instead.
 * `compile(..., tuning=db)` applies the stored tiles to every matmul and
   fused_matmul of that shape. Tiles set explicitly in
   `CodegenOptions.tiles` take precedence.
-* **Known simplification:** tuning times the plain matmul, not the fused one, and
-  it is single-threaded.
+* **Thread count is part of the key.** A tile that is best on one thread is
+  often not best on four: parallel units are whole output blocks, so a smaller
+  NB gives better load balance. `tune_node(threads=N)` builds and times every
+  candidate as an OpenMP kernel on N threads, and entries are keyed
+  `threads=N`. Single-thread keys carry no thread field, so older databases
+  stay valid. A parallel build only uses entries tuned at its own
+  `max_threads`. Earlier, single-thread tiles were applied to 4-thread builds
+  and made some of them slower (4.35 vs 3.81 ms on one transformer).

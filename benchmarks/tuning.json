@@ -622,5 +622,653 @@
    "mr",
    "nv"
   ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=1,m=128,n=2048,k=512,epilogue=t0=add(acc,in0); t1=gelu(t0)": {
+  "candidates": 32,
+  "default_gflops": 262.04,
+  "gflops": 318.86,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=gelu(t0)",
+   "k": 512,
+   "m": 128,
+   "n": 2048
+  },
+  "threads": 4,
+  "tile": [
+   32,
+   256,
+   256,
+   4,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=1,m=128,n=512,k=2048,epilogue=t0=add(acc,in0); t1=add(in1,t0)": {
+  "candidates": 32,
+  "default_gflops": 250.18,
+  "gflops": 294.11,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=add(in1,t0)",
+   "k": 2048,
+   "m": 128,
+   "n": 512
+  },
+  "threads": 4,
+  "tile": [
+   128,
+   256,
+   64,
+   4,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=1,m=128,n=512,k=512,epilogue=t0=add(acc,in0)": {
+  "candidates": 32,
+  "default_gflops": 232.98,
+  "gflops": 245.88,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0)",
+   "k": 512,
+   "m": 128,
+   "n": 512
+  },
+  "threads": 4,
+  "tile": [
+   128,
+   128,
+   128,
+   8,
+   2
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=1,m=128,n=512,k=512,epilogue=t0=add(acc,in0); t1=add(in1,t0)": {
+  "candidates": 32,
+  "default_gflops": 214.98,
+  "gflops": 239.17,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=add(in1,t0)",
+   "k": 512,
+   "m": 128,
+   "n": 512
+  },
+  "threads": 4,
+  "tile": [
+   128,
+   256,
+   64,
+   4,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=1,m=16,n=1024,k=256,epilogue=t0=add(acc,in0); t1=relu(t0)": {
+  "candidates": 32,
+  "default_gflops": 127.85,
+  "gflops": 132.29,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=relu(t0)",
+   "k": 256,
+   "m": 16,
+   "n": 1024
+  },
+  "threads": 4,
+  "tile": [
+   16,
+   256,
+   64,
+   4,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=1,m=16,n=256,k=1024,epilogue=t0=add(acc,in0)": {
+  "candidates": 32,
+  "default_gflops": 101.88,
+  "gflops": 110.69,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0)",
+   "k": 1024,
+   "m": 16,
+   "n": 256
+  },
+  "threads": 4,
+  "tile": [
+   16,
+   128,
+   512,
+   4,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=1,m=256,n=1024,k=4096,epilogue=t0=add(acc,in0)": {
+  "candidates": 32,
+  "default_gflops": 288.59,
+  "gflops": 288.59,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0)",
+   "k": 4096,
+   "m": 256,
+   "n": 1024
+  },
+  "threads": 4,
+  "tile": [
+   48,
+   512,
+   256,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=1,m=256,n=3072,k=768,epilogue=t0=add(acc,in0); t1=gelu(t0)": {
+  "candidates": 32,
+  "default_gflops": 313.48,
+  "gflops": 313.48,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=gelu(t0)",
+   "k": 768,
+   "m": 256,
+   "n": 3072
+  },
+  "threads": 4,
+  "tile": [
+   48,
+   512,
+   256,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=1,m=256,n=4096,k=1024,epilogue=t0=add(acc,in0); t1=relu(t0)": {
+  "candidates": 32,
+  "default_gflops": 393.02,
+  "gflops": 393.02,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=relu(t0)",
+   "k": 1024,
+   "m": 256,
+   "n": 4096
+  },
+  "threads": 4,
+  "tile": [
+   48,
+   512,
+   256,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=1,m=256,n=768,k=3072,epilogue=t0=add(acc,in0); t1=add(in1,t0)": {
+  "candidates": 32,
+  "default_gflops": 255.9,
+  "gflops": 308.08,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=add(in1,t0)",
+   "k": 3072,
+   "m": 256,
+   "n": 768
+  },
+  "threads": 4,
+  "tile": [
+   128,
+   96,
+   256,
+   8,
+   3
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=1,m=256,n=768,k=768,epilogue=t0=add(acc,in0)": {
+  "candidates": 32,
+  "default_gflops": 252.08,
+  "gflops": 298.85,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0)",
+   "k": 768,
+   "m": 256,
+   "n": 768
+  },
+  "threads": 4,
+  "tile": [
+   128,
+   96,
+   256,
+   8,
+   3
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=1,m=256,n=768,k=768,epilogue=t0=add(acc,in0); t1=add(in1,t0)": {
+  "candidates": 32,
+  "default_gflops": 262.28,
+  "gflops": 320.57,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=add(in1,t0)",
+   "k": 768,
+   "m": 256,
+   "n": 768
+  },
+  "threads": 4,
+  "tile": [
+   192,
+   256,
+   64,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=1,m=64,n=1024,k=256,epilogue=t0=add(acc,in0); t1=gelu(t0)": {
+  "candidates": 32,
+  "default_gflops": 187.44,
+  "gflops": 221.52,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=gelu(t0)",
+   "k": 256,
+   "m": 64,
+   "n": 1024
+  },
+  "threads": 4,
+  "tile": [
+   24,
+   128,
+   64,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=1,m=64,n=2048,k=512,epilogue=t0=add(acc,in0); t1=relu(t0)": {
+  "candidates": 32,
+  "default_gflops": 140.14,
+  "gflops": 164.83,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=relu(t0)",
+   "k": 512,
+   "m": 64,
+   "n": 2048
+  },
+  "threads": 4,
+  "tile": [
+   64,
+   128,
+   64,
+   4,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=1,m=64,n=256,k=1024,epilogue=t0=add(acc,in0); t1=add(in1,t0)": {
+  "candidates": 32,
+  "default_gflops": 182.69,
+  "gflops": 203.29,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=add(in1,t0)",
+   "k": 1024,
+   "m": 64,
+   "n": 256
+  },
+  "threads": 4,
+  "tile": [
+   64,
+   128,
+   64,
+   4,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=1,m=64,n=256,k=256,epilogue=t0=add(acc,in0)": {
+  "candidates": 32,
+  "default_gflops": 135.45,
+  "gflops": 135.45,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0)",
+   "k": 256,
+   "m": 64,
+   "n": 256
+  },
+  "threads": 4,
+  "tile": [
+   48,
+   256,
+   256,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=1,m=64,n=256,k=256,epilogue=t0=add(acc,in0); t1=add(in1,t0)": {
+  "candidates": 32,
+  "default_gflops": 135.74,
+  "gflops": 135.74,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=add(in1,t0)",
+   "k": 256,
+   "m": 64,
+   "n": 256
+  },
+  "threads": 4,
+  "tile": [
+   48,
+   256,
+   256,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=1,m=64,n=512,k=2048,epilogue=t0=add(acc,in0)": {
+  "candidates": 32,
+  "default_gflops": 220.88,
+  "gflops": 220.88,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0)",
+   "k": 2048,
+   "m": 64,
+   "n": 512
+  },
+  "threads": 4,
+  "tile": [
+   48,
+   512,
+   256,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=12,m=256,n=256,k=64,epilogue=t0=mul(acc,0.125)": {
+  "candidates": 32,
+  "default_gflops": 338.61,
+  "gflops": 338.61,
+  "shape": {
+   "batch": 12,
+   "epilogue": "t0=mul(acc,0.125)",
+   "k": 64,
+   "m": 256,
+   "n": 256
+  },
+  "threads": 4,
+  "tile": [
+   48,
+   256,
+   64,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=12,m=256,n=64,k=256,epilogue=": {
+  "candidates": 32,
+  "default_gflops": 310.64,
+  "gflops": 310.64,
+  "shape": {
+   "batch": 12,
+   "epilogue": "",
+   "k": 256,
+   "m": 256,
+   "n": 64
+  },
+  "threads": 4,
+  "tile": [
+   48,
+   64,
+   256,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=4,m=64,n=64,k=64,epilogue=": {
+  "candidates": 32,
+  "default_gflops": 84.7,
+  "gflops": 87.38,
+  "shape": {
+   "batch": 4,
+   "epilogue": "",
+   "k": 64,
+   "m": 64,
+   "n": 64
+  },
+  "threads": 4,
+  "tile": [
+   64,
+   64,
+   64,
+   4,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=4,m=64,n=64,k=64,epilogue=t0=mul(acc,0.125)": {
+  "candidates": 32,
+  "default_gflops": 52.35,
+  "gflops": 62.07,
+  "shape": {
+   "batch": 4,
+   "epilogue": "t0=mul(acc,0.125)",
+   "k": 64,
+   "m": 64,
+   "n": 64
+  },
+  "threads": 4,
+  "tile": [
+   64,
+   64,
+   64,
+   4,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=8,m=128,n=128,k=64,epilogue=t0=mul(acc,0.125)": {
+  "candidates": 32,
+  "default_gflops": 229.26,
+  "gflops": 229.26,
+  "shape": {
+   "batch": 8,
+   "epilogue": "t0=mul(acc,0.125)",
+   "k": 64,
+   "m": 128,
+   "n": 128
+  },
+  "threads": 4,
+  "tile": [
+   48,
+   128,
+   64,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,threads=4,b=8,m=128,n=64,k=128,epilogue=": {
+  "candidates": 32,
+  "default_gflops": 246.15,
+  "gflops": 254.39,
+  "shape": {
+   "batch": 8,
+   "epilogue": "",
+   "k": 128,
+   "m": 128,
+   "n": 64
+  },
+  "threads": 4,
+  "tile": [
+   32,
+   64,
+   128,
+   4,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
  }
 }

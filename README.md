@@ -1,5 +1,7 @@
 # tinyfuse
 
+[![tests](https://github.com/PS12007/tinyfuse/actions/workflows/tests.yml/badge.svg)](https://github.com/PS12007/tinyfuse/actions/workflows/tests.yml)
+
 tinyfuse is a small ML compiler I wrote in Python and C. You write a model as
 ordinary Python using a NumPy-like API. tinyfuse traces it into a graph,
 optimizes and fuses the graph, generates C with tiled, vectorized loops,

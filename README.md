@@ -26,8 +26,8 @@ y = f(x, w1, b1, w2, b2)  # NumPy arrays in, NumPy arrays out
   NumPy at `rtol = atol = 1e-4`, plus randomized differential fuzzing.
 * Single-threaded, it is **1.2–1.7× faster than NumPy/OpenBLAS** on these
   models, and on par with or faster than PyTorch eager on the transformer
-  block. **With 4 threads it is 1.5–2.4× slower than PyTorch**, because its
-  threading is naive. Numbers [below](#benchmarks).
+  block. **With 4 threads, PyTorch is 1.35–2.3× faster than it**. Numbers
+  [below](#benchmarks).
 
 Design decisions and their rationale are in **[DESIGN.md](DESIGN.md)**.
 
@@ -236,15 +236,15 @@ PyTorch use 4 threads.
 
 | MLP (batch, in→hidden→out) | unfused | fused | fused+tuned | numpy | pytorch |
 |---|---:|---:|---:|---:|---:|
-| 16, 256→1024→256 | 0.387 (×0.54) | 0.439 (×0.48) | 0.557 (×0.38) | 0.209 | 0.106 (×1.98) |
-| 64, 512→2048→512 | 2.577 (×0.63) | 2.595 (×0.62) | 3.151 (×0.51) | 1.613 | 0.880 (×1.83) |
-| 256, 1024→4096→1024 | 21.28 (×0.79) | 22.65 (×0.74) | 22.09 (×0.76) | 16.77 | 11.20 (×1.50) |
+| 16, 256→1024→256 | 0.202 (×1.11) | 0.181 (×1.24) | 0.169 (×1.32) | 0.223 | 0.101 (×2.21) |
+| 64, 512→2048→512 | 2.170 (×0.79) | 1.972 (×0.87) | 2.171 (×0.79) | 1.723 | 0.859 (×2.00) |
+| 256, 1024→4096→1024 | 19.00 (×0.96) | 17.74 (×1.03) | 17.48 (×1.05) | 18.33 | 11.66 (×1.57) |
 
 | Transformer block (seq, d, heads, ff) | unfused | fused | fused+tuned | numpy | pytorch |
 |---|---:|---:|---:|---:|---:|
-| 64, 256, 4, 1024 | 1.537 (×0.91) | 1.468 (×0.95) | 1.355 (×1.03) | 1.400 | 0.921 (×1.52) |
-| 128, 512, 8, 2048 | 6.745 (×1.18) | 6.511 (×1.22) | 7.326 (×1.08) | 7.936 | 3.361 (×2.36) |
-| 256, 768, 12, 3072 | 25.69 (×1.04) | 23.12 (×1.16) | 22.54 (×1.19) | 26.71 | 11.28 (×2.37) |
+| 64, 256, 4, 1024 | 1.097 (×1.31) | 1.112 (×1.30) | 1.033 (×1.40) | 1.442 | 0.826 (×1.75) |
+| 128, 512, 8, 2048 | 5.469 (×1.38) | 5.192 (×1.46) | 5.478 (×1.38) | 7.569 | 3.186 (×2.38) |
+| 256, 768, 12, 3072 | 20.51 (×1.32) | 17.09 (×1.59) | 16.76 (×1.62) | 27.10 | 10.99 (×2.47) |
 
 ### What the numbers say
 
@@ -262,13 +262,15 @@ PyTorch use 4 threads.
   is too large for the problem.
 * **PyTorch eager** is faster on the smallest and the largest MLP. Its MKL/oneDNN
   GEMM beats ours on large square-ish problems.
-* **Multi-threaded, tinyfuse loses.** PyTorch is 1.5–2.4× faster than tinyfuse
-  at 4 threads, and NumPy wins on the MLPs. Our matmul opens an OpenMP parallel
-  region for every cache block, packs A on one thread, and uses tiles tuned for
-  one thread. The autotuner tunes single-threaded, so its tiles can hurt here
-  (see `fused+tuned` on the MLPs). Going from 1 to 4 threads ranges from
-  0.7× (the smallest MLP gets *slower*) to 1.65×. Fixing this is the most valuable next step: one parallel region per
-  kernel, per-thread A packing, and parallelising over N-panels for small M.
+* **Multi-threaded, PyTorch is clearly ahead.** At 4 threads PyTorch eager is
+  1.35–2.3× faster than tinyfuse-fused. tinyfuse beats NumPy on the transformer
+  block (1.3–1.6×) and is roughly level with it on the MLPs (0.87–1.05×).
+  tinyfuse-fused scales 1.2–2.2× from 1 to 4 threads. Our first threading
+  design scaled 0.7–1.65×, because it forked an OpenMP team for every cache
+  block; the current design uses one parallel region per kernel with
+  per-thread packing (see DESIGN.md). The remaining gap is in the GEMM itself:
+  no prefetching, tiles tuned for one thread, and a fork/join per kernel rather
+  than one per graph.
 * **The multi-threaded numbers are noisier.** On this VM the medians still sit
   10–60 % above the minimums at 4 threads.
 
@@ -301,12 +303,12 @@ PyTorch use 4 threads.
   hand-written assembly. It is tuned for AVX-512; AVX2 and narrower targets work
   through the same vector-extension code but get much less tuning. Packing
   buffers are rebuilt on every call, even for constant weights.
-* **Threading is basic, and it shows (see the 4-thread benchmarks).** With
-  `parallel=True`, OpenMP splits each matmul cache block's micro-tiles and the
-  outer loops of elementwise and row kernels, with a fork/join per block. There
-  is no per-thread packing, no NUMA awareness, and no amortization across
-  kernels. A compiled function is **not reentrant**, because its workspace is
-  shared between calls.
+* **Threading is basic.** With `parallel=True`, each matmul kernel runs one
+  OpenMP region over (row block × panel) units with per-thread A packing, and
+  elementwise and row kernels parallelize their outer loop. There is a fork/join
+  per kernel (not per graph), no NUMA awareness, and the autotuner tunes
+  single-threaded. A compiled function is **not reentrant**, because its
+  workspace is shared between calls.
 * **`-ffast-math`.** It is needed for vectorized `expf`/`tanhf` (glibc libmvec).
   Results can differ from NumPy in the last bits, and NaN/inf inputs give
   unspecified results.

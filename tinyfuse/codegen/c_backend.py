@@ -322,6 +322,8 @@ class CodeGen:
         w("const int kb = TF_MIN(KB, K - k0);")
         w("const int last = (k0 + KB >= K);")
         w("/* pack B[k0:k0+kb, j0:j0+nb] into zero-padded [kb][NR] panels */")
+        if self.opts.parallel:
+            w("#pragma omp parallel for schedule(static) if(np > 1)")
         w.open("for (int p = 0; p < np; ++p)")
         w("float* restrict dst = Bp + (long)p * kb * NR;")
         w("const int jj = j0 + p * NR;")
@@ -355,11 +357,14 @@ class CodeGen:
         w.close()
         w.close()
         w.close()
+        if self.opts.parallel:
+            # every (q, p) micro-tile writes a disjoint block of C
+            w("#pragma omp parallel for collapse(2) schedule(static) if(mp * np > 1)")
         w.open("for (int q = 0; q < mp; ++q)")
+        w.open("for (int p = 0; p < np; ++p)")
         w("const int ii = i0 + q * MR;")
         w("const int hgt = TF_MIN(MR, M - ii);")
         w("const float* restrict ap = Ap + (long)q * kb * MR;")
-        w.open("for (int p = 0; p < np; ++p)")
         w("const int jj = j0 + p * NR;")
         w("const int wdt = TF_MIN(NR, N - jj);")
         w("const float* restrict bp = Bp + (long)p * kb * NR;")

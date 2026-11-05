@@ -51,6 +51,7 @@ class CodegenOptions:
     # (batch, M, N, K) -> MatmulTile; consulted before default_tile
     tiles: Dict[Tuple[int, int, int, int], MatmulTile] = field(default_factory=dict)
     parallel: bool = False          # OpenMP parallel loops
+    profile: bool = False           # time every kernel call (see CompiledModule.profile)
 
     def tile_for(self, batch, m, n, k) -> MatmulTile:
         t = self.tiles.get((batch, m, n, k))
@@ -60,9 +61,9 @@ class CodegenOptions:
 
 
 def default_tile_for(vw: int) -> MatmulTile:
-    if vw >= 16:
-        return MatmulTile(mb=96, nb=256, kb=256, mr=6, nv=2)
-    if vw == 8:
+    if vw >= 16:  # AVX-512: 6x4 zmm accumulators = 24 of 32 registers
+        return MatmulTile(mb=48, nb=512, kb=256, mr=6, nv=4)
+    if vw == 8:   # AVX2: 6x2 ymm accumulators = 12 of 16 registers
         return MatmulTile(mb=96, nb=256, kb=256, mr=6, nv=2)
     return MatmulTile(mb=64, nb=128, kb=256, mr=4, nv=2)
 
@@ -105,9 +106,11 @@ def c_scalar_op(op: str, a: List[str]) -> str:
     if op == "sigmoid":
         return f"(1.0f / (1.0f + expf(-{a[0]})))"
     if op == "gelu":
+        # 0.5*x*(1+tanh(y)) == x * sigmoid(2y): one expf instead of tanhf (faster
+        # with libmvec).  The exponent is clamped so expf never overflows.
         x = a[0]
-        return (f"(0.5f * {x} * (1.0f + tanhf(0.7978845608f * "
-                f"({x} + 0.044715f * {x} * {x} * {x}))))")
+        return (f"({x} / (1.0f + expf(fminf(-1.5957691216f * "
+                f"({x} + 0.044715f * {x} * {x} * {x}), 80.0f))))")
     raise NotImplementedError(op)
 
 
@@ -579,14 +582,23 @@ def generate_c(g: Graph, opts: Optional[CodegenOptions] = None,
             w(f"float* const s{st.sid} = bufs[{n_in + n_out + st.index}];")
         else:
             w(f"float* const s{st.sid} = ws + {st.offset}L;")
-    for k in kernels:
+    for i, k in enumerate(kernels):
+        if opts.profile:
+            w("{ struct timespec t0_, t1_; clock_gettime(CLOCK_MONOTONIC, &t0_);")
         w(f"{k.name}({', '.join(k.args)});  /* {k.comment} */")
+        if opts.profile:
+            w("clock_gettime(CLOCK_MONOTONIC, &t1_);")
+            w(f"tf_prof[{i}] += (t1_.tv_sec - t0_.tv_sec) + 1e-9 * (t1_.tv_nsec - t0_.tv_nsec); }}")
     for oi, st in plan.output_copies:
         w(f"memcpy(bufs[{n_in + oi}], s{st.sid}, sizeof(float) * {st.size}L);")
     w.ind -= 1
     w("}")
 
-    src = (f"#define TF_VW {opts.vector_width}\n" + PRELUDE + "\n" +
+    prof = ""
+    if opts.profile:
+        prof = (f"#include <time.h>\nstatic double tf_prof[{max(len(kernels), 1)}];\n"
+                "double* tf_profile_data(void) { return tf_prof; }\n")
+    src = (f"#define TF_VW {opts.vector_width}\n" + PRELUDE + prof + "\n" +
            "\n\n".join(k.source for k in kernels) + "\n\n" + w.text() + "\n")
     consts = [c.attrs["value"] for c in plan.consts]
     return GeneratedModule(src, g, plan, n_in, n_out, consts, ws_total, kernels)

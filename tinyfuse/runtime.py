@@ -90,6 +90,21 @@ class CompiledModule:
             self._ptrs[base + i] = c.ctypes.data
         self._ptrs[n - 1] = self._ws.ctypes.data
 
+    def profile(self, reset: bool = False):
+        """Per-kernel cumulative seconds (only for modules built with
+        ``CodegenOptions(profile=True)``): list of (kernel name, comment, s)."""
+        if not hasattr(self._lib, "tf_profile_data"):
+            raise RuntimeError("module was not built with profile=True")
+        fn = self._lib.tf_profile_data
+        fn.restype = ctypes.POINTER(ctypes.c_double)
+        data = fn()
+        ks = self.gen.kernels
+        res = [(k.name, k.comment, data[i]) for i, k in enumerate(ks)]
+        if reset:
+            for i in range(len(ks)):
+                data[i] = 0.0
+        return res
+
     def __call__(self, *args, out: Optional[List[np.ndarray]] = None):
         if len(args) != len(self.input_shapes):
             raise TypeError(f"expected {len(self.input_shapes)} inputs, got {len(args)}")

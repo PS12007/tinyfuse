@@ -274,18 +274,18 @@ OpenBLAS and PyTorch's) kept fighting each other for the 4 cores.
 
 | ms per call, 4 threads | unfused | fused | fused+tuned | NumPy | PyTorch |
 |---|---:|---:|---:|---:|---:|
-| MLP 16 × 256→1024→256 | 0.191 | 0.173 | 0.173 | 0.206 | **0.096** |
-| MLP 64 × 512→2048→512 | 2.090 | 2.110 | 2.117 | 1.445 | **0.817** |
-| MLP 256 × 1024→4096→1024 | 15.81 | 16.22 | 16.51 | 16.71 | **9.80** |
-| Transformer seq 64, d 256 | 1.036 | 1.031 | 1.014 | 1.449 | **0.806** |
-| Transformer seq 128, d 512 | 5.148 | 4.615 | 5.264 | 8.553 | **3.133** |
-| Transformer seq 256, d 768 | 17.05 | 16.47 | 15.66 | 25.61 | **12.03** |
+| MLP 16 × 256→1024→256 | 0.163 | 0.151 | 0.129 | 0.196 | **0.101** |
+| MLP 64 × 512→2048→512 | 1.150 | 1.159 | 1.271 | 1.404 | **0.810** |
+| MLP 256 × 1024→4096→1024 | 14.93 | 15.09 | 14.12 | 17.30 | **10.84** |
+| Transformer seq 64, d 256 | 0.823 | **0.766** | 0.786 | 1.329 | 0.862 |
+| Transformer seq 128, d 512 | 3.810 | 3.811 | 4.345 | 8.669 | **2.865** |
+| Transformer seq 256, d 768 | 18.42 | 17.20 | 15.44 | 26.65 | **11.02** |
 
-Multithreaded, PyTorch wins every row, by 1.3 to 2.6 times. tinyfuse beats
-NumPy on five of the six rows (1.2 to 1.9 times), and loses on the medium MLP.
-Threading is the weakest part of the project; see [Limitations](#limitations).
-The 4-thread table was measured after layout folding was added and after a
-threading bug in single-loop elementwise kernels was fixed (see below).
+At 4 threads tinyfuse beats NumPy on every row (1.2 to 2.3 times) and beats
+PyTorch on the smallest transformer. PyTorch is ahead on the other five, by
+1.3 to 1.6 times. That gap used to be up to 2.6 times. Most of the
+improvement came from rewriting the parallel matmul so threads never wait on
+each other (see [Things that went wrong](#things-that-went-wrong-along-the-way)).
 
 ### An elementwise-heavy graph
 
@@ -346,8 +346,13 @@ library's idle threads kept spinning and stole cores from whichever library ran
 next. I switched to timing each variant in its own block.
 
 **The first parallel matmul was slower than the serial one** on small
-problems, because it started a new OpenMP team for every cache block. It now
-uses one parallel region per kernel, with per-thread packing.
+problems, because it started a new OpenMP team for every cache block. The
+second version used one parallel region per kernel but still had all threads
+pack B together and then wait at two barriers per block, and it scaled only
+1.35x on 4 cores for a 64-row matmul. The current version has no barriers at
+all. Each thread owns whole output blocks (a column block times a group of
+row blocks), packs its own panels, and runs the full K loop. On 4 cores it
+now scales 2.9x on that matmul and 3.4x on a 256×1024×4096 one.
 
 **Single-loop elementwise kernels ignored `parallel=True`.** The generator only
 parallelized the outer loop of a loop nest. A contiguous op like `gelu(h)`

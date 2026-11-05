@@ -1,13 +1,13 @@
 model,config,cfg,variant,threads,rounds,median_ms,min_ms,gflops_median,unit,speedup_vs_numpy
-elementwise,256 x 1024,256x1024,tinyfuse-unfused,4,676,0.3635,0.2459,721.17,Melem/s,5.758
-elementwise,256 x 1024,256x1024,tinyfuse-fused,4,676,0.2503,0.2001,1047.36,Melem/s,8.363
-elementwise,256 x 1024,256x1024,numpy,4,676,2.0931,1.7109,125.24,Melem/s,1.0
-elementwise,256 x 1024,256x1024,pytorch,4,676,0.5022,0.3823,521.98,Melem/s,4.168
-elementwise,1024 x 1024,1024x1024,tinyfuse-unfused,4,120,1.5303,1.2829,685.2,Melem/s,8.374
-elementwise,1024 x 1024,1024x1024,tinyfuse-fused,4,120,0.8429,0.7346,1244.02,Melem/s,15.203
-elementwise,1024 x 1024,1024x1024,numpy,4,120,12.8143,10.9684,81.83,Melem/s,1.0
-elementwise,1024 x 1024,1024x1024,pytorch,4,120,6.0756,4.7605,172.59,Melem/s,2.109
-elementwise,4096 x 1024,4096x1024,tinyfuse-unfused,4,25,9.6126,7.8403,436.33,Melem/s,6.792
-elementwise,4096 x 1024,4096x1024,tinyfuse-fused,4,25,3.4292,3.1286,1223.13,Melem/s,19.04
-elementwise,4096 x 1024,4096x1024,numpy,4,25,65.2931,51.6831,64.24,Melem/s,1.0
-elementwise,4096 x 1024,4096x1024,pytorch,4,25,13.5052,11.8377,310.57,Melem/s,4.835
+elementwise,256 x 1024,256x1024,tinyfuse-unfused,4,654,0.3461,0.2621,757.43,Melem/s,6.344
+elementwise,256 x 1024,256x1024,tinyfuse-fused,4,654,0.2263,0.1958,1158.21,Melem/s,9.7
+elementwise,256 x 1024,256x1024,numpy,4,654,2.1956,1.7648,119.4,Melem/s,1.0
+elementwise,256 x 1024,256x1024,pytorch,4,654,0.5124,0.3906,511.64,Melem/s,4.285
+elementwise,1024 x 1024,1024x1024,tinyfuse-unfused,4,127,1.806,1.3151,580.62,Melem/s,6.487
+elementwise,1024 x 1024,1024x1024,tinyfuse-fused,4,127,0.9131,0.7833,1148.32,Melem/s,12.829
+elementwise,1024 x 1024,1024x1024,numpy,4,127,11.7145,8.6963,89.51,Melem/s,1.0
+elementwise,1024 x 1024,1024x1024,pytorch,4,127,6.4081,5.1702,163.63,Melem/s,1.828
+elementwise,4096 x 1024,4096x1024,tinyfuse-unfused,4,25,14.1769,12.4632,295.85,Melem/s,4.359
+elementwise,4096 x 1024,4096x1024,tinyfuse-fused,4,25,4.4038,3.2586,952.42,Melem/s,14.031
+elementwise,4096 x 1024,4096x1024,numpy,4,25,61.7902,54.4717,67.88,Melem/s,1.0
+elementwise,4096 x 1024,4096x1024,pytorch,4,25,13.982,12.2324,299.98,Melem/s,4.419

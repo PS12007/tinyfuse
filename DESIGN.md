@@ -180,17 +180,23 @@ nothing.
     24 of the 32 zmm registers for accumulators. In measurements it was the most
     consistent across the benchmark shapes. The default AVX2 tile is `6×2`
     vectors. Tiles are clamped to the problem size.
-* **Threading (`parallel=True`).** The first version forked an OpenMP team for
-  every cache block, packed A on one thread, and split only the micro-tiles of
-  one block. At 4 threads that was often *slower* than 1 thread. The current
-  version opens **one parallel region per matmul kernel**. Inside it, B panels
-  are packed with `omp for`, and the work units are `(row block × B panel)`
-  pairs, distributed with `omp for collapse(2)`. Each thread packs A into its own
-  scratch slice (`max_threads` slices are reserved) and skips repacking while
-  consecutive units share a row block. Small-M problems still get parallelism
-  across N panels. Each unit's owner applies the epilogue to its own region.
-  Elementwise, softmax and layernorm kernels use `omp parallel for` on their
-  outer loop when the tensor has at least 32K elements.
+* **Threading (`parallel=True`).** The matmul went through three versions.
+  The first forked an OpenMP team for every cache block, and at 4 threads it
+  was often slower than at 1. The second used one region per kernel, but every
+  (N block, K block) step had all threads pack B together and then hit two
+  barriers. For small M there was too little compute between barriers: a
+  64×512×2048 matmul scaled 1.35× on 4 cores. The current version is
+  **barrier-free**. A work unit is (batch, column block, group of row blocks).
+  One thread computes a unit start to finish: it packs that unit's B panels
+  once per K block and reuses them across the row blocks in its group. It packs
+  A per row block into a private scratch slice, and applies the epilogue
+  itself. NB shrinks until there are at least 2 units per thread, and the
+  group size is the largest that keeps 2 units per thread. Measured on 4
+  cores: 2.9× scaling on 64×512×2048 and 3.4× on 256×1024×4096 (the latter
+  within about 20% of PyTorch/MKL). Elementwise, softmax, layernorm and
+  reduction kernels use `omp parallel for` on their outer loop, or
+  `omp parallel for simd` when the loop is 1-D, once the tensor has at least
+  32K elements.
 * **Softmax / LayerNorm.** These are row-wise kernels with `omp simd reduction`
   loops. Softmax subtracts the row max, which keeps it stable for large inputs
   (tested). The max starts at `-FLT_MAX`, not `-INFINITY`; see the fast-math note

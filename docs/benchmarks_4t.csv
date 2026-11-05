@@ -1,31 +1,31 @@
 model,config,cfg,variant,threads,rounds,median_ms,min_ms,gflops_median,unit,speedup_vs_numpy
-mlp,batch=16 256→1024→256,16x256x1024x256,tinyfuse-unfused,4,3243,0.1909,0.1304,87.89,GFLOP/s,1.079
-mlp,batch=16 256→1024→256,16x256x1024x256,tinyfuse-fused,4,3243,0.1727,0.1184,97.17,GFLOP/s,1.193
-mlp,batch=16 256→1024→256,16x256x1024x256,tinyfuse-fused+tuned,4,3243,0.1732,0.1074,96.85,GFLOP/s,1.189
-mlp,batch=16 256→1024→256,16x256x1024x256,numpy,4,3243,0.206,0.1634,81.43,GFLOP/s,1.0
-mlp,batch=16 256→1024→256,16x256x1024x256,pytorch,4,3243,0.0965,0.0827,173.88,GFLOP/s,2.135
-mlp,batch=64 512→2048→512,64x512x2048x512,tinyfuse-unfused,4,542,2.0896,1.2514,128.46,GFLOP/s,0.692
-mlp,batch=64 512→2048→512,64x512x2048x512,tinyfuse-fused,4,542,2.11,1.219,127.22,GFLOP/s,0.685
-mlp,batch=64 512→2048→512,64x512x2048x512,tinyfuse-fused+tuned,4,542,2.1171,1.9007,126.79,GFLOP/s,0.683
-mlp,batch=64 512→2048→512,64x512x2048x512,numpy,4,542,1.4454,1.1531,185.72,GFLOP/s,1.0
-mlp,batch=64 512→2048→512,64x512x2048x512,pytorch,4,542,0.8167,0.7128,328.67,GFLOP/s,1.77
-mlp,batch=256 1024→4096→1024,256x1024x4096x1024,tinyfuse-unfused,4,71,15.8118,12.1678,271.63,GFLOP/s,1.057
-mlp,batch=256 1024→4096→1024,256x1024x4096x1024,tinyfuse-fused,4,71,16.2227,12.5001,264.75,GFLOP/s,1.03
-mlp,batch=256 1024→4096→1024,256x1024x4096x1024,tinyfuse-fused+tuned,4,71,16.5087,14.9069,260.16,GFLOP/s,1.012
-mlp,batch=256 1024→4096→1024,256x1024x4096x1024,numpy,4,71,16.7145,14.8559,256.96,GFLOP/s,1.0
-mlp,batch=256 1024→4096→1024,256x1024x4096x1024,pytorch,4,71,9.798,8.841,438.35,GFLOP/s,1.706
-transformer,seq=64 d=256 h=4 ff=1024,64x256x4x1024,tinyfuse-unfused,4,760,1.0364,0.6904,101.18,GFLOP/s,1.398
-transformer,seq=64 d=256 h=4 ff=1024,64x256x4x1024,tinyfuse-fused,4,760,1.0308,0.8764,101.73,GFLOP/s,1.406
-transformer,seq=64 d=256 h=4 ff=1024,64x256x4x1024,tinyfuse-fused+tuned,4,760,1.0144,0.8811,103.37,GFLOP/s,1.428
-transformer,seq=64 d=256 h=4 ff=1024,64x256x4x1024,numpy,4,760,1.4491,1.0761,72.36,GFLOP/s,1.0
-transformer,seq=64 d=256 h=4 ff=1024,64x256x4x1024,pytorch,4,760,0.8057,0.6028,130.14,GFLOP/s,1.798
-transformer,seq=128 d=512 h=8 ff=2048,128x512x8x2048,tinyfuse-unfused,4,137,5.1478,3.5938,162.95,GFLOP/s,1.661
-transformer,seq=128 d=512 h=8 ff=2048,128x512x8x2048,tinyfuse-fused,4,137,4.6152,3.0783,181.76,GFLOP/s,1.853
-transformer,seq=128 d=512 h=8 ff=2048,128x512x8x2048,tinyfuse-fused+tuned,4,137,5.2637,3.4449,159.37,GFLOP/s,1.625
-transformer,seq=128 d=512 h=8 ff=2048,128x512x8x2048,numpy,4,137,8.553,7.1882,98.08,GFLOP/s,1.0
-transformer,seq=128 d=512 h=8 ff=2048,128x512x8x2048,pytorch,4,137,3.1335,2.6868,267.71,GFLOP/s,2.73
-transformer,seq=256 d=768 h=12 ff=3072,256x768x12x3072,tinyfuse-unfused,4,47,17.0507,16.0014,224.34,GFLOP/s,1.502
-transformer,seq=256 d=768 h=12 ff=3072,256x768x12x3072,tinyfuse-fused,4,47,16.4703,12.1694,232.25,GFLOP/s,1.555
-transformer,seq=256 d=768 h=12 ff=3072,256x768x12x3072,tinyfuse-fused+tuned,4,47,15.6591,14.7227,244.28,GFLOP/s,1.635
-transformer,seq=256 d=768 h=12 ff=3072,256x768x12x3072,numpy,4,47,25.6085,23.9644,149.37,GFLOP/s,1.0
-transformer,seq=256 d=768 h=12 ff=3072,256x768x12x3072,pytorch,4,47,12.0308,10.6225,317.95,GFLOP/s,2.129
+mlp,batch=16 256→1024→256,16x256x1024x256,tinyfuse-unfused,4,5470,0.1626,0.1338,103.15,GFLOP/s,1.207
+mlp,batch=16 256→1024→256,16x256x1024x256,tinyfuse-fused,4,5470,0.1508,0.1259,111.27,GFLOP/s,1.302
+mlp,batch=16 256→1024→256,16x256x1024x256,tinyfuse-fused+tuned,4,5470,0.1288,0.107,130.22,GFLOP/s,1.523
+mlp,batch=16 256→1024→256,16x256x1024x256,numpy,4,5470,0.1963,0.1587,85.48,GFLOP/s,1.0
+mlp,batch=16 256→1024→256,16x256x1024x256,pytorch,4,5470,0.101,0.0815,166.07,GFLOP/s,1.943
+mlp,batch=64 512→2048→512,64x512x2048x512,tinyfuse-unfused,4,803,1.1498,1.0666,233.47,GFLOP/s,1.222
+mlp,batch=64 512→2048→512,64x512x2048x512,tinyfuse-fused,4,803,1.159,1.0426,231.61,GFLOP/s,1.212
+mlp,batch=64 512→2048→512,64x512x2048x512,tinyfuse-fused+tuned,4,803,1.2714,1.1699,211.13,GFLOP/s,1.105
+mlp,batch=64 512→2048→512,64x512x2048x512,numpy,4,803,1.4045,1.1359,191.13,GFLOP/s,1.0
+mlp,batch=64 512→2048→512,64x512x2048x512,pytorch,4,803,0.81,0.6742,331.39,GFLOP/s,1.734
+mlp,batch=256 1024→4096→1024,256x1024x4096x1024,tinyfuse-unfused,4,68,14.926,12.1811,287.75,GFLOP/s,1.159
+mlp,batch=256 1024→4096→1024,256x1024x4096x1024,tinyfuse-fused,4,68,15.0879,11.9431,284.66,GFLOP/s,1.147
+mlp,batch=256 1024→4096→1024,256x1024x4096x1024,tinyfuse-fused+tuned,4,68,14.1228,11.8478,304.12,GFLOP/s,1.225
+mlp,batch=256 1024→4096→1024,256x1024x4096x1024,numpy,4,68,17.3016,14.0501,248.24,GFLOP/s,1.0
+mlp,batch=256 1024→4096→1024,256x1024x4096x1024,pytorch,4,68,10.8362,9.0547,396.35,GFLOP/s,1.597
+transformer,seq=64 d=256 h=4 ff=1024,64x256x4x1024,tinyfuse-unfused,4,867,0.823,0.7047,127.41,GFLOP/s,1.615
+transformer,seq=64 d=256 h=4 ff=1024,64x256x4x1024,tinyfuse-fused,4,867,0.7656,0.6413,136.97,GFLOP/s,1.736
+transformer,seq=64 d=256 h=4 ff=1024,64x256x4x1024,tinyfuse-fused+tuned,4,867,0.7862,0.5333,133.38,GFLOP/s,1.691
+transformer,seq=64 d=256 h=4 ff=1024,64x256x4x1024,numpy,4,867,1.3293,1.0075,78.88,GFLOP/s,1.0
+transformer,seq=64 d=256 h=4 ff=1024,64x256x4x1024,pytorch,4,867,0.8619,0.6115,121.66,GFLOP/s,1.542
+transformer,seq=128 d=512 h=8 ff=2048,128x512x8x2048,tinyfuse-unfused,4,134,3.8101,3.002,220.17,GFLOP/s,2.275
+transformer,seq=128 d=512 h=8 ff=2048,128x512x8x2048,tinyfuse-fused,4,134,3.8115,3.2022,220.09,GFLOP/s,2.274
+transformer,seq=128 d=512 h=8 ff=2048,128x512x8x2048,tinyfuse-fused+tuned,4,134,4.3447,3.6355,193.08,GFLOP/s,1.995
+transformer,seq=128 d=512 h=8 ff=2048,128x512x8x2048,numpy,4,134,8.6686,7.3156,96.77,GFLOP/s,1.0
+transformer,seq=128 d=512 h=8 ff=2048,128x512x8x2048,pytorch,4,134,2.8651,2.4919,292.78,GFLOP/s,3.026
+transformer,seq=256 d=768 h=12 ff=3072,256x768x12x3072,tinyfuse-unfused,4,46,18.4203,15.6093,207.66,GFLOP/s,1.447
+transformer,seq=256 d=768 h=12 ff=3072,256x768x12x3072,tinyfuse-fused,4,46,17.1973,14.2901,222.43,GFLOP/s,1.549
+transformer,seq=256 d=768 h=12 ff=3072,256x768x12x3072,tinyfuse-fused+tuned,4,46,15.44,13.3988,247.75,GFLOP/s,1.726
+transformer,seq=256 d=768 h=12 ff=3072,256x768x12x3072,numpy,4,46,26.6462,22.6946,143.56,GFLOP/s,1.0
+transformer,seq=256 d=768 h=12 ff=3072,256x768x12x3072,pytorch,4,46,11.0197,10.0418,347.12,GFLOP/s,2.418

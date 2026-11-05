@@ -1,0 +1,626 @@
+{
+ "cpu=6b120f18e6,vw=16,b=1,m=128,n=2048,k=512,epilogue=t0=add(acc,in0); t1=gelu(t0)": {
+  "candidates": 32,
+  "default_gflops": 97.85,
+  "gflops": 102.51,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=gelu(t0)",
+   "k": 512,
+   "m": 128,
+   "n": 2048
+  },
+  "tile": [
+   96,
+   1024,
+   64,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=1,m=128,n=512,k=2048,epilogue=t0=add(acc,in0); t1=add(in1,t0)": {
+  "candidates": 32,
+  "default_gflops": 114.33,
+  "gflops": 120.14,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=add(in1,t0)",
+   "k": 2048,
+   "m": 128,
+   "n": 512
+  },
+  "tile": [
+   24,
+   512,
+   64,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=1,m=128,n=512,k=512,epilogue=t0=add(acc,in0)": {
+  "candidates": 32,
+  "default_gflops": 107.07,
+  "gflops": 110.59,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0)",
+   "k": 512,
+   "m": 128,
+   "n": 512
+  },
+  "tile": [
+   24,
+   512,
+   64,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=1,m=128,n=512,k=512,epilogue=t0=add(acc,in0); t1=add(in1,t0)": {
+  "candidates": 32,
+  "default_gflops": 104.95,
+  "gflops": 108.54,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=add(in1,t0)",
+   "k": 512,
+   "m": 128,
+   "n": 512
+  },
+  "tile": [
+   24,
+   512,
+   64,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=1,m=16,n=1024,k=256,epilogue=t0=add(acc,in0); t1=relu(t0)": {
+  "candidates": 32,
+  "default_gflops": 45.32,
+  "gflops": 53.67,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=relu(t0)",
+   "k": 256,
+   "m": 16,
+   "n": 1024
+  },
+  "tile": [
+   16,
+   512,
+   64,
+   4,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=1,m=16,n=256,k=1024,epilogue=t0=add(acc,in0)": {
+  "candidates": 32,
+  "default_gflops": 57.58,
+  "gflops": 64.29,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0)",
+   "k": 1024,
+   "m": 16,
+   "n": 256
+  },
+  "tile": [
+   16,
+   256,
+   128,
+   4,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=1,m=256,n=1024,k=4096,epilogue=t0=add(acc,in0)": {
+  "candidates": 32,
+  "default_gflops": 114.12,
+  "gflops": 114.12,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0)",
+   "k": 4096,
+   "m": 256,
+   "n": 1024
+  },
+  "tile": [
+   48,
+   512,
+   256,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=1,m=256,n=3072,k=768,epilogue=t0=add(acc,in0); t1=gelu(t0)": {
+  "candidates": 32,
+  "default_gflops": 106.17,
+  "gflops": 106.17,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=gelu(t0)",
+   "k": 768,
+   "m": 256,
+   "n": 3072
+  },
+  "tile": [
+   48,
+   512,
+   256,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=1,m=256,n=4096,k=1024,epilogue=t0=add(acc,in0); t1=relu(t0)": {
+  "candidates": 32,
+  "default_gflops": 109.74,
+  "gflops": 109.74,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=relu(t0)",
+   "k": 1024,
+   "m": 256,
+   "n": 4096
+  },
+  "tile": [
+   48,
+   512,
+   256,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=1,m=256,n=768,k=3072,epilogue=t0=add(acc,in0); t1=add(in1,t0)": {
+  "candidates": 32,
+  "default_gflops": 111.75,
+  "gflops": 115.91,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=add(in1,t0)",
+   "k": 3072,
+   "m": 256,
+   "n": 768
+  },
+  "tile": [
+   24,
+   768,
+   256,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=1,m=256,n=768,k=768,epilogue=t0=add(acc,in0)": {
+  "candidates": 32,
+  "default_gflops": 117.56,
+  "gflops": 126.78,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0)",
+   "k": 768,
+   "m": 256,
+   "n": 768
+  },
+  "tile": [
+   192,
+   768,
+   128,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=1,m=256,n=768,k=768,epilogue=t0=add(acc,in0); t1=add(in1,t0)": {
+  "candidates": 32,
+  "default_gflops": 113.81,
+  "gflops": 122.4,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=add(in1,t0)",
+   "k": 768,
+   "m": 256,
+   "n": 768
+  },
+  "tile": [
+   48,
+   768,
+   64,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=1,m=64,n=1024,k=256,epilogue=t0=add(acc,in0); t1=gelu(t0)": {
+  "candidates": 32,
+  "default_gflops": 77.7,
+  "gflops": 83.25,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=gelu(t0)",
+   "k": 256,
+   "m": 64,
+   "n": 1024
+  },
+  "tile": [
+   32,
+   1024,
+   64,
+   4,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=1,m=64,n=2048,k=512,epilogue=t0=add(acc,in0); t1=relu(t0)": {
+  "candidates": 32,
+  "default_gflops": 95.09,
+  "gflops": 95.09,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=relu(t0)",
+   "k": 512,
+   "m": 64,
+   "n": 2048
+  },
+  "tile": [
+   48,
+   512,
+   256,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=1,m=64,n=256,k=1024,epilogue=t0=add(acc,in0); t1=add(in1,t0)": {
+  "candidates": 32,
+  "default_gflops": 94.47,
+  "gflops": 94.47,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=add(in1,t0)",
+   "k": 1024,
+   "m": 64,
+   "n": 256
+  },
+  "tile": [
+   48,
+   256,
+   256,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=1,m=64,n=256,k=256,epilogue=t0=add(acc,in0)": {
+  "candidates": 32,
+  "default_gflops": 85.73,
+  "gflops": 91.25,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0)",
+   "k": 256,
+   "m": 64,
+   "n": 256
+  },
+  "tile": [
+   64,
+   256,
+   64,
+   4,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=1,m=64,n=256,k=256,epilogue=t0=add(acc,in0); t1=add(in1,t0)": {
+  "candidates": 32,
+  "default_gflops": 81.09,
+  "gflops": 84.04,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0); t1=add(in1,t0)",
+   "k": 256,
+   "m": 64,
+   "n": 256
+  },
+  "tile": [
+   66,
+   256,
+   128,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=1,m=64,n=512,k=2048,epilogue=t0=add(acc,in0)": {
+  "candidates": 32,
+  "default_gflops": 98.02,
+  "gflops": 106.99,
+  "shape": {
+   "batch": 1,
+   "epilogue": "t0=add(acc,in0)",
+   "k": 2048,
+   "m": 64,
+   "n": 512
+  },
+  "tile": [
+   16,
+   512,
+   64,
+   4,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=12,m=256,n=256,k=64,epilogue=t0=mul(acc,0.125)": {
+  "candidates": 32,
+  "default_gflops": 105.67,
+  "gflops": 105.67,
+  "shape": {
+   "batch": 12,
+   "epilogue": "t0=mul(acc,0.125)",
+   "k": 64,
+   "m": 256,
+   "n": 256
+  },
+  "tile": [
+   48,
+   256,
+   64,
+   6,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=12,m=256,n=64,k=256,epilogue=": {
+  "candidates": 32,
+  "default_gflops": 89.42,
+  "gflops": 94.12,
+  "shape": {
+   "batch": 12,
+   "epilogue": "",
+   "k": 256,
+   "m": 256,
+   "n": 64
+  },
+  "tile": [
+   64,
+   64,
+   256,
+   4,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=4,m=64,n=64,k=64,epilogue=": {
+  "candidates": 32,
+  "default_gflops": 56.67,
+  "gflops": 59.16,
+  "shape": {
+   "batch": 4,
+   "epilogue": "",
+   "k": 64,
+   "m": 64,
+   "n": 64
+  },
+  "tile": [
+   32,
+   64,
+   64,
+   4,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=4,m=64,n=64,k=64,epilogue=t0=mul(acc,0.125)": {
+  "candidates": 32,
+  "default_gflops": 54.61,
+  "gflops": 57.85,
+  "shape": {
+   "batch": 4,
+   "epilogue": "t0=mul(acc,0.125)",
+   "k": 64,
+   "m": 64,
+   "n": 64
+  },
+  "tile": [
+   32,
+   64,
+   64,
+   4,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=8,m=128,n=128,k=64,epilogue=t0=mul(acc,0.125)": {
+  "candidates": 32,
+  "default_gflops": 91.47,
+  "gflops": 96.2,
+  "shape": {
+   "batch": 8,
+   "epilogue": "t0=mul(acc,0.125)",
+   "k": 64,
+   "m": 128,
+   "n": 128
+  },
+  "tile": [
+   16,
+   128,
+   64,
+   4,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ },
+ "cpu=6b120f18e6,vw=16,b=8,m=128,n=64,k=128,epilogue=": {
+  "candidates": 32,
+  "default_gflops": 79.17,
+  "gflops": 86.79,
+  "shape": {
+   "batch": 8,
+   "epilogue": "",
+   "k": 128,
+   "m": 128,
+   "n": 64
+  },
+  "tile": [
+   64,
+   64,
+   64,
+   4,
+   4
+  ],
+  "tile_names": [
+   "mb",
+   "nb",
+   "kb",
+   "mr",
+   "nv"
+  ]
+ }
+}

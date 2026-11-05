@@ -144,7 +144,8 @@ def _draw_graph(ax, g, title):
         ax.add_patch(FancyBboxPatch((x - w / 2, y - 0.26), w, 0.52,
                                     boxstyle="round,pad=0.0,rounding_size=0.08",
                                     fc=color, ec=SURFACE, lw=1.5, zorder=3))
-        if n.op == "fused_matmul" and (n.attrs.get("a_view") or n.attrs.get("b_view")):
+        if n.op == "fused_matmul" and (n.attrs.get("a_view") or n.attrs.get("b_view")
+                                       or n.attrs.get("c_perm")):
             # gray stripe: reads a transposed/reshaped input in place
             ax.add_patch(FancyBboxPatch((x - w / 2, y - 0.26), 0.16, 0.52,
                                         boxstyle="round,pad=0.0,rounding_size=0.06",
@@ -156,7 +157,8 @@ def _draw_graph(ax, g, title):
         dark = color in (BLUE,)
         shift = 0.0
         if n.op == "fused_matmul":
-            shift += 0.08 if (n.attrs.get("a_view") or n.attrs.get("b_view")) else 0.0
+            shift += 0.08 if (n.attrs.get("a_view") or n.attrs.get("b_view")
+                              or n.attrs.get("c_perm")) else 0.0
             shift -= 0.08 if n.attrs.get("epilogue") else 0.0
         ax.text(x + shift, y, label, ha="center",
                 va="center", fontsize=7.3, zorder=4,
@@ -192,7 +194,7 @@ def fig_graph():
                fontsize=8.5, labelcolor=TEXT)
     fig.text(0.01, 0.985, "Transformer block (seq=64, d=256, 4 heads). Graph inputs and "
              "constants not drawn. Orange stripe: elementwise ops folded into the matmul. "
-             "Gray stripe: reads a transposed input in place.",
+             "Gray stripe: reads or writes a transposed or reshaped tensor in place.",
              fontsize=8.5, color=TEXT2, va="top")
     fig.tight_layout(rect=(0, 0.03, 1, 0.97))
     save(fig, "fusion_graph.png")

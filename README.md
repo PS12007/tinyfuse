@@ -43,7 +43,7 @@ print(f.source)      # the generated C
 y = f(x, w1, b1, w2, b2)   # NumPy arrays in, NumPy arrays out
 ```
 
-Run the tests (292 of them, about 20 seconds; the first run spends most of
+Run the tests (329 of them, about 20 seconds; the first run spends most of
 that compiling C):
 
 ```bash
@@ -73,8 +73,9 @@ python docs/make_figures.py                  # regenerate every image in this RE
 ```
 
 Supported ops: `matmul` (2-D and batched), `add`, `sub`, `mul`, `div`,
-`maximum`, `relu`, `gelu` (tanh form), `sigmoid`, `tanh`, `exp`, `neg`,
-`softmax` and `layernorm` (last axis), `reshape`, `transpose`.
+`maximum`, `relu`, `gelu` (tanh form), `sigmoid`, `tanh`, `exp`, `neg`, `sqrt`,
+`rsqrt`, `sum`/`mean`/`max` (last axis), `softmax` and `layernorm` (last
+axis), `reshape`, `transpose`.
 
 ## How it works
 
@@ -97,8 +98,8 @@ it after every pass.
 
 ### 2. Optimizing and fusing
 
-The `fused` pipeline runs constant folding, CSE and DCE, then two fusion passes
-and a layout pass:
+The `fused` pipeline runs constant folding, CSE and DCE, then three fusion
+passes and a layout pass:
 
 * **Matmul epilogue fusion.** Starting at each matmul, it follows the chain of
   elementwise ops that consume the result: bias add, activation, residual add,
@@ -108,6 +109,9 @@ and a layout pass:
 * **Elementwise fusion.** Whatever elementwise chains are left get merged into
   single loops. A node joins a group only if all of its users are already in
   that group. That rule is what guarantees fusion can never create a cycle.
+* **Reduction fusion.** An elementwise chain whose only consumer is a `sum`,
+  `mean` or `max` is evaluated inside the reduction loop, so `mean(x*x)` reads
+  `x` once and never writes `x*x` to memory.
 * **Layout folding.** A transpose, or a reshape of contiguous data, is just a
   strided view of its input. When one feeds a matmul, the matmul reads the
   original buffer through those strides during packing, and the transpose
@@ -149,6 +153,24 @@ read q and `k^T` straight out of the projection outputs:
                      b_view=f32[4,64,64] strides [64,1,256], epilogue=[t0=mul(acc,0.125)]}
 %9: f32[64,256]  = fused_matmul(%8, %wo, %bo, %x) {epilogue=[t0=add(acc,in0); t1=add(in1,t0)]}
 ```
+
+Reductions mean you can write your own normalization layers. An RMSNorm:
+
+```python
+def rmsnorm(x, g):
+    return x * tf.rsqrt(tf.mean(x * x) + 1e-6) * g
+```
+
+compiles to three loops: one fused reduction and two elementwise kernels.
+
+```
+%0: f32[64,1]   = fused_reduce(%x) {kind=mean, program=[t0=mul(in0,in0)], ...}
+%1: f32[64,1]   = fused_elementwise(%0) {program=[t0=add(in0,1e-06); t1=rsqrt(t0)]}
+%2: f32[64,256] = fused_elementwise(%x, %1, %g) {program=[t0=mul(in0,in1); t1=mul(t0,in2)]}
+```
+
+`%1` is left as its own small kernel on purpose. Fusing it into `%2` would mean
+computing the `rsqrt` once per element instead of once per row.
 
 Layout folding is correct and tested, but I couldn't measure a speedup from
 it: the transposes were only about 2% of the runtime, and reading `k^T`
@@ -346,6 +368,7 @@ with `rtol = atol = 1e-4`.
 | `test_codegen_ops.py` | every op through C at odd sizes and with every broadcast pattern; tiny tiles that force every edge path in the matmul; aliased and duplicated outputs; alignment; the profiler |
 | `test_models.py` | MLP and transformer at 4 sizes × 3 pipelines, a PyTorch cross-check, OpenMP builds |
 | `test_fuzz.py` | 40 random graphs, each compiled 4 ways, compared with the interpreter |
+| `test_reductions.py` | sum/mean/max vs NumPy, reduction fusion IR, hand-written RMSNorm and layernorm (checked against the built-in kernel) |
 | `test_memory.py` | live buffers never overlap, and reuse actually saves memory |
 | `test_autotune.py` | the search space, the tuning database, precedence of explicit tiles, the CLI |
 
@@ -354,9 +377,9 @@ with `rtol = atol = 1e-4`.
 * Static shapes, float32 and inference only. A new input shape means
   re-tracing and recompiling (compiled code is cached by a hash of its source).
   There is no autodiff and no low-precision types.
-* The op set is small. There is no concat, slicing, gather, convolution or
-  general reduction. Softmax and layernorm only reduce over the last axis, and
-  batched matmul needs identical batch dimensions.
+* The op set is small. There is no concat, slicing, gather or convolution.
+  Reductions, softmax and layernorm only work over the last axis, and batched
+  matmul needs identical batch dimensions.
 * Fusion is local. Layernorm and softmax are never fused with their
   neighbours, and there is nothing like flash attention. Transposes that feed a
   matmul are folded away, but a transpose of a matmul's *output* (the head
@@ -384,7 +407,7 @@ with `rtol = atol = 1e-4`.
 | `tinyfuse/frontend.py` | `Tensor`, operator overloading, `trace()` |
 | `tinyfuse/ops.py` | op registry: shape rules plus NumPy semantics |
 | `tinyfuse/ir.py` | graph, printer, verifier |
-| `tinyfuse/passes/` | constant folding, CSE, DCE, both fusion passes, layout folding, pass manager |
+| `tinyfuse/passes/` | constant folding, CSE, DCE, matmul/elementwise/reduction fusion, layout folding, pass manager |
 | `tinyfuse/codegen/` | C emitter and memory planner |
 | `tinyfuse/runtime.py` | gcc invocation, `.so` cache, `ctypes` wrapper, aligned buffers, profiler |
 | `tinyfuse/autotune.py` | tile search and the tuning database |

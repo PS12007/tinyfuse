@@ -137,7 +137,24 @@ def neg(x): return _unary("neg", x)
 def exp(x): return _unary("exp", x)
 def tanh(x): return _unary("tanh", x)
 def sigmoid(x): return _unary("sigmoid", x)
+def sqrt(x): return _unary("sqrt", x)
+def rsqrt(x): return _unary("rsqrt", x)
 def matmul(a, b): return _op("matmul", [a, b])
+
+
+def sum(x, axis: int = -1, keepdims: bool = True):  # noqa: A001 (mirrors numpy)
+    """Sum over the last axis."""
+    return _op("reduce_sum", [x], {"axis": axis, "keepdims": bool(keepdims)})
+
+
+def mean(x, axis: int = -1, keepdims: bool = True):
+    """Mean over the last axis."""
+    return _op("reduce_mean", [x], {"axis": axis, "keepdims": bool(keepdims)})
+
+
+def max(x, axis: int = -1, keepdims: bool = True):  # noqa: A001
+    """Maximum over the last axis."""
+    return _op("reduce_max", [x], {"axis": axis, "keepdims": bool(keepdims)})
 
 
 def softmax(x, axis: int = -1):

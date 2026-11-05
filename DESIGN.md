@@ -71,7 +71,7 @@ Pipelines (`passes/manager.py`):
 |---|---|
 | `none` | nothing: one kernel per traced op |
 | `unfused` | constant folding → CSE → DCE |
-| `fused` | `unfused` + matmul-epilogue fusion → elementwise fusion → layout folding → DCE |
+| `fused` | `unfused` + matmul-epilogue fusion → elementwise fusion → reduction fusion → layout folding → DCE |
 
 `optimize()` runs the pipeline up to twice, stopping once a full round changes
 nothing.
@@ -107,6 +107,17 @@ nothing.
   recomputed once per element of a larger output. Multi-use values whose users
   all sit in one group (`relu(x)*exp(x)`) still fuse. Scalar constants become
   literals in the program.
+* **Reductions and reduction fusion** (`reduction_fusion.py`). `sum`, `mean`
+  and `max` reduce over the last axis only, with `keepdims` (default True,
+  so results broadcast back naturally). The NumPy reference accumulates in
+  float64; the C kernel accumulates in float32, using an
+  `omp simd reduction`. When a reduction's input is an elementwise node (or
+  fused group) used by nothing else, the pass produces a `fused_reduce` node,
+  which carries that program and its broadcast input shape (`in_shape`). The
+  kernel evaluates the program inside the reduction loop. Small reduced values
+  such as a per-row `rsqrt` are *not* fused into the following full-size loop:
+  that follows the same "never recompute a broadcast producer" rule as
+  elementwise fusion.
 * **Layout folding** (`layout_folding.py`). Each transpose, and each reshape of
   a contiguous view, is a strided view `(shape, strides)` of some base tensor.
   When a matmul operand is such a chain, the matmul gets the base tensor as its

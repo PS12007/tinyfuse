@@ -8,6 +8,7 @@ from .cse import common_subexpression_elimination
 from .dce import dead_code_elimination
 from .fusion import elementwise_fusion
 from .layout_folding import layout_folding
+from .reduction_fusion import reduction_fusion
 from .matmul_fusion import matmul_epilogue_fusion
 
 PassFn = Callable[[Graph], bool]
@@ -21,8 +22,8 @@ PIPELINES: Dict[str, List[PassFn]] = {
     # graph cleanups, but every op still gets its own kernel
     "unfused": _CLEANUP,
     # cleanups + fusion
-    "fused": _CLEANUP + [matmul_epilogue_fusion, elementwise_fusion, layout_folding,
-                         dead_code_elimination],
+    "fused": _CLEANUP + [matmul_epilogue_fusion, elementwise_fusion, reduction_fusion,
+                         layout_folding, dead_code_elimination],
 }
 
 

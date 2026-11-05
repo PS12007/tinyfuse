@@ -21,7 +21,7 @@ def random_program(seed):
         for _ in range(int(rng.integers(3, 12))):
             a = vals[int(rng.integers(len(vals)))]
             c = vals[int(rng.integers(len(vals)))]
-            k = int(rng.integers(12))
+            k = int(rng.integers(14))
             if k == 0:
                 v = a + c
             elif k == 1:
@@ -44,8 +44,12 @@ def random_program(seed):
                 v = a.T.T + 0.0
             elif k == 10:
                 v = tf.sigmoid(a.reshape(C, R).T)
-            else:
+            elif k == 11:
                 v = tf.maximum(a, c) / 3.0
+            elif k == 12:
+                v = a - tf.mean(a * c)                    # reduction + broadcast back
+            else:
+                v = a * tf.rsqrt(tf.sum(tf.exp(a * 0.1)) + 1.0)
             vals.append(v)
         n_out = int(rng.integers(1, 3))
         return vals[-n_out:]

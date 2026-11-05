@@ -161,7 +161,7 @@ def _fmt_shape(s):
 
 
 def _fmt_float(v: float) -> str:
-    r = repr(float(v))
+    r = str(np.float32(v))   # shortest repr that round-trips in float32
     return r[:-2] if r.endswith(".0") else r
 
 

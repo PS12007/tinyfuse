@@ -126,6 +126,10 @@ def c_scalar_op(op: str, a: List[str]) -> str:
     if op == "sigmoid":
         # exponent clamped: libmvec's expf takes a slow scalar path on underflow
         return f"(1.0f / (1.0f + expf(fmaxf(fminf(-{a[0]}, 80.0f), -80.0f))))"
+    if op == "sqrt":
+        return f"sqrtf({a[0]})"
+    if op == "rsqrt":
+        return f"(1.0f / sqrtf({a[0]}))"
     if op == "gelu":
         # 0.5*x*(1+tanh(y)) == x * sigmoid(2y): one expf instead of tanhf (faster
         # with libmvec).  The exponent is clamped to [-80, 80]: that never
@@ -524,6 +528,53 @@ class CodeGen:
         args = [self.buf(a), self.buf(b), self.buf(n)] + [self.buf(e) for e in extra] + ["scratch"]
         return Kernel(name, w.text(), args, scratch=scratch)
 
+    # ---- reductions (plain and with a fused elementwise prologue) -----------
+    def gen_reduce(self, n: Node, name: str) -> Kernel:
+        if n.op == "fused_reduce":
+            kind, program, in_shape = n.attrs["kind"], n.attrs["program"], tuple(n.attrs["in_shape"])
+        else:
+            kind, in_shape = n.op[len("reduce_"):], tuple(n.inputs[0].shape)
+            program = (("add", (("in", 0), ("c", 0.0))),)   # identity prologue
+        L = in_shape[-1]
+        outer = in_shape[:-1] or (1,)
+        strides = [list(broadcast_strides(x.shape, in_shape)) for x in n.inputs]
+        if len(in_shape) == 1:
+            strides = [[0] + st for st in strides]
+        inner = [st[-1] for st in strides]
+        o_str = list(broadcast_strides(outer, outer))
+        shape, all_st = merge_dims(outer, [st[:-1] for st in strides] + [o_str])
+        in_outer, out_outer = all_st[:-1], all_st[-1]
+        nd = len(shape)
+        vars_ = [f"i{d}" for d in range(nd)]
+        w = Writer()
+        params = [f"const float* restrict in{k}" for k in range(len(n.inputs))] + \
+                 ["float* restrict out"]
+        w.open(f"static void {name}({', '.join(params)})")
+        for d in range(nd):
+            if d == 0:
+                self.omp_for(w, numel(in_shape))
+            w.open(f"for (long {vars_[d]} = 0; {vars_[d]} < {shape[d]}L; ++{vars_[d]})")
+        bases = [f"in{k} + {_index(vars_, in_outer[k])}" for k in range(len(n.inputs))]
+        for k, b in enumerate(bases):
+            w(f"const float* restrict r{k} = {b};")
+        init = "-FLT_MAX" if kind == "max" else "0.0f"
+        red = "max" if kind == "max" else "+"
+        w(f"float acc = {init};")
+        w(f"#pragma omp simd reduction({red}:acc)")
+        w.open(f"for (long j = 0; j < {L}L; ++j)")
+        in_exprs = [f"r{k}[{_index(['j'], [inner[k]])}]" for k in range(len(n.inputs))]
+        stmts, res = emit_program(program, in_exprs)
+        for s_ in stmts:
+            w(s_)
+        w(f"acc = fmaxf(acc, {res});" if kind == "max" else f"acc += {res};")
+        w.close()
+        scale = f" * (1.0f / {L}.0f)" if kind == "mean" else ""
+        w(f"out[{_index(vars_, out_outer)}] = acc{scale};")
+        for _ in range(nd):
+            w.close()
+        w.close()
+        return Kernel(name, w.text(), [self.buf(x) for x in n.inputs] + [self.buf(n)])
+
     # ---- softmax ------------------------------------------------------------
     def gen_softmax(self, n: Node, name: str) -> Kernel:
         L = n.shape[-1]
@@ -622,6 +673,8 @@ class CodeGen:
             return self.gen_matmul(n, name)
         if n.op == "softmax":
             return self.gen_softmax(n, name)
+        if n.op.startswith("reduce_") or n.op == "fused_reduce":
+            return self.gen_reduce(n, name)
         if n.op == "layernorm":
             return self.gen_layernorm(n, name)
         if n.op == "transpose":

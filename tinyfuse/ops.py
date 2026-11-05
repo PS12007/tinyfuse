@@ -151,6 +151,8 @@ UNARY_FNS = {
     "exp": np.exp,
     "tanh": np.tanh,
     "sigmoid": np_sigmoid,
+    "sqrt": np.sqrt,
+    "rsqrt": lambda x: 1.0 / np.sqrt(x),
 }
 
 BINARY_FNS = {
@@ -246,6 +248,34 @@ def np_layernorm(x, g, b, eps):
 register(OpDef("layernorm", 3, _layernorm_infer,
                lambda xs, a: _f32(np_layernorm(xs[0], xs[1], xs[2], a["eps"])),
                attr_names=("eps",)))
+
+
+# --------------------------------------------------------------------------
+# Reductions over the last axis: sum / mean / max
+# --------------------------------------------------------------------------
+
+REDUCE_FNS = {"sum": np.sum, "mean": np.mean, "max": np.max}
+
+
+def _reduce_infer(s, a):
+    x = s[0]
+    if len(x) == 0:
+        raise ShapeError("reductions need rank>=1")
+    if _norm_axis(a.get("axis", -1), len(x)) != len(x) - 1:
+        raise ShapeError("reductions only support the last axis")
+    return tuple(x[:-1]) + ((1,) if a.get("keepdims", True) else ())
+
+
+def _reduce_eval(kind):
+    def ev(xs, a):
+        r = REDUCE_FNS[kind](xs[0].astype(np.float64), axis=-1, keepdims=a.get("keepdims", True))
+        return _f32(r)
+    return ev
+
+
+for _k in REDUCE_FNS:
+    register(OpDef(f"reduce_{_k}", 1, _reduce_infer, _reduce_eval(_k),
+                   attr_names=("axis", "keepdims")))
 
 
 # --------------------------------------------------------------------------
@@ -405,6 +435,23 @@ def _fused_mm_eval(xs, a):
 
 register(OpDef("fused_matmul", None, _fused_mm_infer, _fused_mm_eval,
                attr_names=("epilogue", "a_view", "b_view")))
+
+
+def _fused_reduce_infer(s, a):
+    check_program(a["program"], len(s))
+    full = broadcast_shapes(*s)
+    if tuple(a["in_shape"]) != full:
+        raise ShapeError(f"fused_reduce in_shape {a['in_shape']} != broadcast of inputs {full}")
+    return _reduce_infer([full], a)
+
+
+def _fused_reduce_eval(xs, a):
+    v = eval_program(a["program"], xs, tuple(a["in_shape"]))
+    return _reduce_eval(a["kind"])([v], a)
+
+
+register(OpDef("fused_reduce", None, _fused_reduce_infer, _fused_reduce_eval,
+               attr_names=("kind", "program", "in_shape", "keepdims")))
 
 
 def matmul_operand_shapes(n) -> Tuple[Shape, Shape]:

@@ -81,7 +81,7 @@ class CompiledModule:
         self.input_shapes = [tuple(i.shape) for i in g.inputs]
         self.input_names = [i.name for i in g.inputs]
         self.output_shapes = [tuple(o.shape) for o in g.outputs]
-        self._consts = [np.ascontiguousarray(c, dtype=np.float32) for c in gen.consts]
+        self._consts = [np.asarray(c, dtype=np.float32, order="C") for c in gen.consts]
         self._ws = np.zeros(max(gen.workspace_floats, 16), dtype=np.float32)
         n = gen.n_inputs + gen.n_outputs + len(self._consts) + 1
         self._ptrs = (ctypes.c_void_p * n)()
@@ -95,7 +95,7 @@ class CompiledModule:
             raise TypeError(f"expected {len(self.input_shapes)} inputs, got {len(args)}")
         keep = []
         for i, (a, shape) in enumerate(zip(args, self.input_shapes)):
-            a = np.ascontiguousarray(a, dtype=np.float32)
+            a = np.asarray(a, dtype=np.float32, order="C")
             if a.shape != shape:
                 raise ValueError(f"input '{self.input_names[i]}' expects shape {shape}, "
                                  f"got {a.shape}")

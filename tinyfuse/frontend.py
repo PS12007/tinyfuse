@@ -169,7 +169,8 @@ def trace(fn: Callable, *shapes, name: Optional[str] = None, **named_shapes) -> 
     Input shapes are given positionally (in parameter order) or by parameter
     name.  ``fn`` may return a single Tensor or a tuple/list of Tensors.
     """
-    params = list(inspect.signature(fn).parameters)
+    sig = inspect.signature(fn).parameters
+    params = list(sig)
     specs = {}
     for p, s in zip(params, shapes):
         specs[p] = s
@@ -181,6 +182,9 @@ def trace(fn: Callable, *shapes, name: Optional[str] = None, **named_shapes) -> 
         specs[k] = s
     if len(shapes) > len(params):
         raise TypeError("too many input shapes")
+    # parameters with defaults and no shape keep their default (e.g. axis=-1)
+    params = [p for p in params
+              if p in specs or sig[p].default is inspect.Parameter.empty]
     missing = [p for p in params if p not in specs]
     if missing:
         raise TypeError(f"missing shapes for parameters {missing}")

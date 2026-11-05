@@ -68,6 +68,15 @@ def default_tile_for(vw: int) -> MatmulTile:
     return MatmulTile(mb=64, nb=128, kb=256, mr=4, nv=2)
 
 
+def clamp_tile(t: MatmulTile, m: int, n: int, k: int, vw: int) -> MatmulTile:
+    """Shrink cache tiles to the problem and round them to micro-tile multiples."""
+    nr = t.nv * vw
+    kb = max(1, min(t.kb, k))
+    nb = max(nr, min(t.nb, -(-n // nr) * nr)) // nr * nr
+    mb = max(t.mr, min(t.mb, -(-m // t.mr) * t.mr)) // t.mr * t.mr
+    return MatmulTile(mb, nb, kb, t.mr, t.nv)
+
+
 # --------------------------------------------------------------------------
 # Scalar expression helpers (shared by elementwise kernels and epilogues)
 # --------------------------------------------------------------------------
@@ -273,13 +282,10 @@ class CodeGen:
         batch_dims = out[:-2]
         BATCH = numel(batch_dims)
         b_stride = K * N if len(b.shape) > 2 else 0
-        t = self.opts.tile_for(BATCH, M, N, K)
         vw = self.vw
-        MR, NV = t.mr, t.nv
+        t = clamp_tile(self.opts.tile_for(BATCH, M, N, K), M, N, K, vw)
+        MB, NB, KB, MR, NV = t.key()
         NR = NV * vw
-        KB = max(1, min(t.kb, K))
-        NB = max(NR, min(t.nb, -(-N // NR) * NR)) // NR * NR
-        MB = max(MR, min(t.mb, -(-M // MR) * MR)) // MR * MR
         scratch = KB * NB + MB * KB
 
         ex_strides = [list(broadcast_strides(e.shape, out)) for e in extra]

@@ -1,0 +1,60 @@
+import json
+
+import numpy as np
+
+import tinyfuse as tf
+from tinyfuse.autotune import TuningDB, candidate_tiles, main, matmul_shapes, tune_matmul
+from tinyfuse.codegen import CodegenOptions, MatmulTile
+from tinyfuse.models import mlp2, mlp2_shapes, np_mlp2, random_inputs
+from tinyfuse.runtime import native_vector_width
+from conftest import assert_close
+
+VW = native_vector_width()
+
+
+def test_candidates_respect_register_budget_and_problem_size():
+    cs = candidate_tiles(10, 40, 7, VW, max_candidates=500)
+    regs = 32 if VW >= 16 else 16
+    assert len(cs) == len(set(cs))
+    for t in cs:
+        assert t.mr * t.nv + t.nv + 1 <= regs
+        assert t.mb % t.mr == 0 and t.nb % (t.nv * VW) == 0 and t.kb <= 7
+
+
+def test_tune_matmul_picks_fastest_correct_tile():
+    tile, gf, res = tune_matmul(1, 20, 33, 17, max_candidates=4, reps=2, min_time=0.0)
+    assert len(res) == 4 and gf == max(r["gflops"] for r in res)
+    assert isinstance(tile, MatmulTile)
+
+
+def test_db_roundtrip_and_compile_uses_tiles(tmp_path):
+    path = tmp_path / "t.json"
+    sh = mlp2_shapes(8, 16, 24, 4)
+    g = tf.trace(mlp2, **sh)
+    db = TuningDB(path).tune_graph(g, max_candidates=3, reps=1, min_time=0.0)
+    keys = matmul_shapes(tf.optimize(g))
+    assert keys == [(1, 8, 24, 16), (1, 8, 4, 24)]
+    data = json.loads(path.read_text())
+    assert len(data) == 2
+    db2 = TuningDB(path)
+    t = db2.get(keys[0], VW)
+    assert t is not None
+    f = tf.compile(mlp2, tuning=db2, **sh)
+    from tinyfuse.codegen.c_backend import clamp_tile
+    c = clamp_tile(t, 8, 24, 16, VW)
+    assert f"tile mb={c.mb} nb={c.nb} kb={c.kb} mr={c.mr} nr={c.nv * VW}" in f.source
+    xs = random_inputs(sh)
+    assert_close(f(*xs), np_mlp2(*[x.astype(np.float64) for x in xs]))
+    # explicit per-shape tile overrides the database; caller's options not mutated
+    forced = MatmulTile(6, VW, 4, 3, 1)
+    opts = CodegenOptions(vector_width=VW, tiles={keys[0]: forced})
+    f2 = tf.compile(mlp2, tuning=db2, options=opts, **sh)
+    assert f"mb=6 nb={VW} kb=4 mr=3" in f2.source
+    assert list(opts.tiles) == [keys[0]]
+
+
+def test_cli(tmp_path, capsys):
+    p = tmp_path / "db.json"
+    main(["--shape", "8x16x24", "--db", str(p), "--candidates", "2"])
+    assert "best" in capsys.readouterr().out
+    assert json.loads(p.read_text())

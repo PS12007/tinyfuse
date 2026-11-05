@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Callable, Optional, Union
 
 from .codegen.c_backend import CodegenOptions, generate_c
@@ -36,7 +37,10 @@ def compile_graph(g: Graph, pipeline: str = "fused", options: Optional[CodegenOp
     opt = optimize(g, pipeline)
     options = options or CodegenOptions(vector_width=native_vector_width())
     if tuning is not None:
-        options.tiles.update(tuning.tiles_for(opt, options))
+        tiles = dict(options.tiles)
+        for shape, tile in tuning.tiles_for(opt, options).items():
+            tiles.setdefault(shape, tile)   # explicit per-shape tiles win
+        options = dataclasses.replace(options, tiles=tiles)
     gen = generate_c(opt, options)
     return CompiledFunction(g, opt, CompiledModule(gen, parallel=options.parallel))
 

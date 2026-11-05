@@ -206,3 +206,17 @@ def test_parallel_build_matches(rng):
     f = tf.compile(blk, options=opts, **sh)
     assert "-fopenmp" not in f.source  # flag lives in the build, not the source
     assert_close(f(*xs), npb(*[x.astype(np.float64) for x in xs]))
+
+
+def test_profiler_reports_every_kernel(rng):
+    opts = CodegenOptions(vector_width=VW, profile=True)
+    f = tf.compile(lambda x, w: tf.softmax(tf.relu(x @ w)).T, (8, 8), (8, 8), options=opts)
+    x = rand(rng, 8, 8)
+    f(x, x)
+    prof = f.module.profile(reset=True)
+    assert [p[0].split("_", 1)[1] for p in prof] == ["fused_matmul", "softmax", "transpose"]
+    assert all(p[2] > 0 for p in prof)
+    assert all(p[2] == 0 for p in f.module.profile())
+    g = tf.compile(lambda x: x * 2.0, (2,))
+    with pytest.raises(RuntimeError):
+        g.module.profile()

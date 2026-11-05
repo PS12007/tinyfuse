@@ -53,8 +53,9 @@ def test_transformer_fused_structure():
     # their head-split operands through strided views)
     assert c["fused_matmul"] == 8 and "matmul" not in c
     assert c.get("fused_elementwise", 0) == 0
-    # only the head-merge transpose after att@v is still materialised
-    assert c["transpose"] == 1
+    # no layout op is materialised: head split folded into operand views,
+    # head merge folded into att@v's store
+    assert "transpose" not in c and "reshape" not in c
     assert not any(op in c for op in ("add", "mul", "gelu"))
     unf = tf.compile(blk, pipeline="unfused", **sh)
     assert unf.module.gen.plan.ws_size > f.module.gen.plan.ws_size

@@ -125,9 +125,15 @@ nothing.
   the strides. Shape inference checks that a view stays inside its base buffer,
   and the interpreter applies views with `as_strided`. A reshape of
   non-contiguous data (for example after the head-merge transpose) is not a
-  strided view, so folding stops there. Measured effect on the transformer
-  block: 19 → 13 ops and 15 → 12 kernels, but no measurable runtime change
-  (±1%). The transposes were about 2% of runtime, and the strided gather for
+  strided view, so folding stops there. A transpose *of a matmul's output*
+  whose permutation keeps the last axis last is folded the other way. The
+  matmul gets `c_perm` and stores each logical (batch, row) through the
+  permuted row and batch strides; columns stay contiguous, so the vector
+  stores are unchanged. Epilogues are evaluated in logical coordinates
+  before the permuted store. A matmul that already has `c_perm` is not
+  extended by later epilogue fusion. Measured effect on the transformer
+  block: 19 → 11 ops and 15 → 11 kernels (no layout ops left), but no
+  measurable runtime change (within about 2%). The transposes were about 2% of runtime, and the strided gather for
   `k^T` during packing costs some of that back.
 * **Order.** Matmul fusion runs first so that bias and activation end up in the
   matmul epilogue rather than in a separate fused-elementwise kernel. The matmul

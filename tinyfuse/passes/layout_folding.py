@@ -16,6 +16,10 @@ Example (attention scores)::
     %s  = fused_matmul(%q, %kt)
  ->
     %s  = fused_matmul(%q, %k) {b_view=f32[4,64,64] strides [64,1,256]}
+
+A transpose of a matmul's *output* that keeps the last axis last is folded
+the other way: the matmul stores its result already permuted (``c_perm``),
+which removes attention's head-merge transpose after ``att @ v``.
 """
 
 from __future__ import annotations
@@ -43,8 +47,35 @@ def resolve_view(x: Node) -> Tuple[Node, View]:
     return x, (tuple(x.shape), contiguous_strides(x.shape))
 
 
-def layout_folding(g: Graph) -> bool:
+def _fold_output_transposes(g: Graph) -> bool:
+    """transpose(fused_matmul) -> fused_matmul that stores its result already
+    permuted, when the permutation keeps the last axis last (so the inner,
+    vectorised stores stay contiguous)."""
+    users = g.users()
+    outs = g.output_ids()
     changed = False
+    for i, t in enumerate(g.nodes):
+        if t.op != "transpose":
+            continue
+        m = t.inputs[0]
+        perm = tuple(t.attrs["perm"])
+        if m.op not in ("matmul", "fused_matmul") or m.id in outs or m.attrs.get("c_perm"):
+            continue
+        if {u.id for u in users.get(m.id, [])} != {t.id} or perm[-1] != len(perm) - 1:
+            continue
+        attrs = dict(m.attrs)
+        attrs.setdefault("epilogue", None)
+        attrs["c_perm"] = perm
+        new = Node("fused_matmul", list(m.inputs), attrs)
+        assert new.shape == t.shape
+        g.nodes[i] = new
+        g.replace_all_uses(t, new)
+        changed = True
+    return changed
+
+
+def layout_folding(g: Graph) -> bool:
+    changed = _fold_output_transposes(g)
     for i, n in enumerate(g.nodes):
         if n.op not in ("matmul", "fused_matmul"):
             continue

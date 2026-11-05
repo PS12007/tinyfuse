@@ -27,8 +27,8 @@ def matmul_epilogue_fusion(g: Graph) -> bool:
     replace: Dict[int, Node] = {}   # last chain node -> fused node
     removed = set()
     for m in g.nodes:
-        if m.op not in ("matmul", "fused_matmul") or m.id in removed:
-            continue
+        if m.op not in ("matmul", "fused_matmul") or m.id in removed or m.attrs.get("c_perm"):
+            continue   # an epilogue on a permuted store would see permuted shapes
         chain = []
         cur = m
         while cur.id not in outs:

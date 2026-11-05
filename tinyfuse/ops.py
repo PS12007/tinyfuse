@@ -410,10 +410,19 @@ def apply_view(x: np.ndarray, view) -> np.ndarray:
                                            strides=[st * x.itemsize for st in strides])
 
 
+def _check_c_perm(perm, rank):
+    if perm is None:
+        return
+    if sorted(perm) != list(range(rank)) or perm[-1] != rank - 1:
+        raise ShapeError(f"c_perm {perm} must permute {rank} dims and keep the last one last")
+
+
 def _fused_mm_infer(s, a):
     sa = view_shape(s[0], a.get("a_view"))
     sb = view_shape(s[1], a.get("b_view"))
     out = matmul_shape(sa, sb)
+    perm = a.get("c_perm")
+    _check_c_perm(perm, len(out))
     ep = a.get("epilogue")
     if ep is not None:
         check_program(ep, len(s) - 2, allow_acc=True)
@@ -422,19 +431,19 @@ def _fused_mm_infer(s, a):
                 raise ShapeError(f"epilogue input {extra} does not broadcast to {out}")
     elif len(s) != 2:
         raise ShapeError("fused_matmul without epilogue takes exactly 2 inputs")
-    return out
+    return tuple(out[p] for p in perm) if perm else out
 
 
 def _fused_mm_eval(xs, a):
     acc = _f32(np.matmul(apply_view(xs[0], a.get("a_view")), apply_view(xs[1], a.get("b_view"))))
     ep = a.get("epilogue")
-    if ep is None:
-        return acc
-    return eval_program(ep, xs[2:], acc.shape, acc=acc)
+    res = acc if ep is None else eval_program(ep, xs[2:], acc.shape, acc=acc)
+    perm = a.get("c_perm")
+    return np.ascontiguousarray(np.transpose(res, perm)) if perm else res
 
 
 register(OpDef("fused_matmul", None, _fused_mm_infer, _fused_mm_eval,
-               attr_names=("epilogue", "a_view", "b_view")))
+               attr_names=("epilogue", "a_view", "b_view", "c_perm")))
 
 
 def _fused_reduce_infer(s, a):

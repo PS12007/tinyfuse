@@ -86,3 +86,50 @@ def test_folded_matmuls_match_numpy(case, opts, rng):
     xs = [rand(rng, *s) for s in shapes]
     ref = tf.run_graph(tf.trace(fn, *shapes), xs)[0]
     assert_close(f(*xs), ref)
+
+
+def test_output_transpose_folds_into_store():
+    check_pass(lambda a, b: (a @ b).transpose(1, 0, 2), [(2, 3, 4), (2, 4, 5)], [layout_folding],
+               before="""
+graph f(%a: f32[2,3,4], %b: f32[2,4,5]) {
+  %0: f32[2,3,5] = matmul(%a, %b)
+  %1: f32[3,2,5] = transpose(%0) {perm=[1,0,2]}
+  return %1
+}""", after="""
+graph f(%a: f32[2,3,4], %b: f32[2,4,5]) {
+  %0: f32[3,2,5] = fused_matmul(%a, %b) {c_perm=[1,0,2]}
+  return %0
+}""")
+
+
+def test_output_transpose_not_folded_when_last_axis_moves_or_value_shared():
+    g = tf.trace(lambda a, b: (a @ b).T, (3, 4), (4, 5))          # moves the last axis
+    assert layout_folding(g) is False
+    g = tf.trace(lambda a, b: ((a @ b).transpose(1, 0, 2), a @ b), (2, 3, 4), (2, 4, 5))
+    from tinyfuse.passes import common_subexpression_elimination
+    common_subexpression_elimination(g)
+    assert layout_folding(g) is False                             # matmul has 2 users
+
+
+OUT_CASES = [
+    (lambda a, b: (a @ b).transpose(1, 0, 2), [(4, 7, 9), (4, 9, 11)]),
+    (lambda a, b: ((a @ b) * 2.0 + 1.0).transpose(1, 0, 2), [(3, 13, 5), (3, 5, 17)]),
+    (lambda a, b: (a @ b).transpose(1, 0, 2).reshape(13, 3 * 17) @ tf.constant(np.ones((51, 4))),
+     [(3, 13, 5), (3, 5, 17)]),
+    (lambda a, b: (a @ b).transpose(2, 1, 0, 3), [(2, 3, 5, 6), (2, 3, 6, 7)]),
+]
+
+
+@pytest.mark.parametrize("case", range(len(OUT_CASES)))
+@pytest.mark.parametrize("opts", ["default", "tiny", "tiny-parallel"])
+def test_output_folded_matmuls_match_numpy(case, opts, rng):
+    fn, shapes = OUT_CASES[case]
+    tile = MatmulTile(mb=6, nb=VW, kb=4, mr=3, nv=1)
+    o = {"default": None,
+         "tiny": CodegenOptions(vector_width=VW, default_tile=tile),
+         "tiny-parallel": CodegenOptions(vector_width=VW, default_tile=tile, parallel=True,
+                                         max_threads=3)}[opts]
+    f = tf.compile(fn, *shapes, options=o)
+    assert "transpose" not in f.optimized.op_counts()
+    xs = [rand(rng, *s) for s in shapes]
+    assert_close(f(*xs), tf.run_graph(tf.trace(fn, *shapes), xs)[0])

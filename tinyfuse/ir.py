@@ -193,6 +193,9 @@ def _fmt_attrs(n: Node) -> str:
         elif k in ("program", "epilogue"):
             if v is not None:
                 parts.append(f"{k}=[{format_program(v)}]")
+        elif k == "c_perm":
+            if v is not None:
+                parts.append(f"c_perm=[{','.join(map(str, v))}]")
         elif k in ("a_view", "b_view"):
             if v is not None:
                 shp, st = v

@@ -22,7 +22,7 @@ import numpy as np
 
 from ..ir import Graph, Node
 from ..ops import (ELEMENTWISE_ARITY, broadcast_strides, contiguous_strides,
-                   matmul_operand_shapes, numel)
+                   matmul_operand_shapes, matmul_shape, numel)
 from .memory import MemoryPlan, plan_memory
 
 
@@ -363,12 +363,12 @@ class CodeGen:
         w.open("else if (full)")
         w("#pragma GCC unroll 16")
         w("for (int r = 0; r < MR; ++r)")
-        w("    for (int v = 0; v < NV; ++v) acc[r][v] = *(const tf_vf*)(Cb + (long)(ii + r) * N + jj + v * VW);")
+        w("    for (int v = 0; v < NV; ++v) acc[r][v] = *(const tf_vf*)(Cb + (long)(ii + r) * SCM + jj + v * VW);")
         w.close()
         w.open("else")
         w("memset(tmp, 0, sizeof(tmp));")
         w("for (int r = 0; r < hgt; ++r)")
-        w("    for (int c = 0; c < wdt; ++c) tmp[r * NR + c] = Cb[(long)(ii + r) * N + jj + c];")
+        w("    for (int c = 0; c < wdt; ++c) tmp[r * NR + c] = Cb[(long)(ii + r) * SCM + jj + c];")
         w("for (int r = 0; r < MR; ++r)")
         w("    for (int v = 0; v < NV; ++v) acc[r][v] = *(const tf_vf*)(tmp + r * NR + v * VW);")
         w.close()
@@ -386,13 +386,13 @@ class CodeGen:
         w.open("if (full)")
         w("#pragma GCC unroll 16")
         w("for (int r = 0; r < MR; ++r)")
-        w("    for (int v = 0; v < NV; ++v) *(tf_vf*)(Cb + (long)(ii + r) * N + jj + v * VW) = acc[r][v];")
+        w("    for (int v = 0; v < NV; ++v) *(tf_vf*)(Cb + (long)(ii + r) * SCM + jj + v * VW) = acc[r][v];")
         w.close()
         w.open("else")
         w("for (int r = 0; r < MR; ++r)")
         w("    for (int v = 0; v < NV; ++v) *(tf_vf*)(tmp + r * NR + v * VW) = acc[r][v];")
         w("for (int r = 0; r < hgt; ++r)")
-        w("    for (int c = 0; c < wdt; ++c) Cb[(long)(ii + r) * N + jj + c] = tmp[r * NR + c];")
+        w("    for (int c = 0; c < wdt; ++c) Cb[(long)(ii + r) * SCM + jj + c] = tmp[r * NR + c];")
         w.close()
 
     @staticmethod
@@ -400,7 +400,7 @@ class CodeGen:
         """Apply the epilogue to rows i0..i0+mb, columns [col_lo, col_hi)."""
         w.open("for (int r = 0; r < mb; ++r)")
         w("const long i = i0 + r;")
-        w("float* restrict crow = Cb + i * N;")
+        w("float* restrict crow = Cb + i * SCM;")
         w("#pragma omp simd")
         w.open(f"for (long j = {col_lo}; j < {col_hi}; ++j)")
         in_exprs = [f"eb{k}[{_index(['i', 'j'], st[-2:])}]" for k, st in enumerate(ex_strides)]
@@ -411,14 +411,14 @@ class CodeGen:
         w.close()
         w.close()
 
-    def _mm_serial_body(self, w, batch_dims, a_batch, b_batch, ex_strides, epilogue):
+    def _mm_serial_body(self, w, batch_dims, a_batch, b_batch, c_batch, ex_strides, epilogue):
         BATCH = numel(batch_dims)
         w("float* restrict Bp = scratch;")
         w("float* restrict Ap = scratch + KB * NB;")
         w.open(f"for (long bt = 0; bt < {BATCH}L; ++bt)")
         w(f"const float* restrict Ab = A + {_batch_offset(a_batch, batch_dims)};")
         w(f"const float* restrict Bb = B + {_batch_offset(b_batch, batch_dims)};")
-        w("float* restrict Cb = C + bt * (long)(M * N);")
+        w(f"float* restrict Cb = C + {_batch_offset(c_batch, batch_dims)};")
         for k, st in enumerate(ex_strides):
             w(f"const float* restrict eb{k} = e{k} + {_batch_offset(st[:-2], batch_dims)};")
         w("(void)Ab; (void)Bb;")
@@ -453,7 +453,7 @@ class CodeGen:
         w.close()  # bt
         w.close()  # fn
 
-    def _mm_parallel_body(self, w, BATCH, batch_dims, a_batch, b_batch, ex_strides,
+    def _mm_parallel_body(self, w, BATCH, batch_dims, a_batch, b_batch, c_batch, ex_strides,
                           epilogue, nthreads, grp):
         """Barrier-free OpenMP matmul.  A unit = (batch, column block, group of
         ``grp`` row blocks) is computed start to finish by one thread, which
@@ -472,7 +472,7 @@ class CodeGen:
         w.open("for (int g = 0; g < NG; ++g)")
         w(f"const float* restrict Ab = A + {_batch_offset(a_batch, batch_dims)};")
         w(f"const float* restrict Bb = B + {_batch_offset(b_batch, batch_dims)};")
-        w("float* restrict Cb = C + bt * (long)(M * N);")
+        w(f"float* restrict Cb = C + {_batch_offset(c_batch, batch_dims)};")
         for k, st in enumerate(ex_strides):
             w(f"const float* restrict eb{k} = e{k} + {_batch_offset(st[:-2], batch_dims)};")
         w("(void)Ab; (void)Bb;")
@@ -509,8 +509,17 @@ class CodeGen:
         a, b = n.inputs[0], n.inputs[1]
         extra = n.inputs[2:]
         epilogue = n.attrs.get("epilogue") if n.op == "fused_matmul" else None
-        out = n.shape
         sa, sb = matmul_operand_shapes(n)
+        out = matmul_shape(sa, sb)                    # logical result shape
+        c_perm = n.attrs.get("c_perm") if n.op == "fused_matmul" else None
+        if c_perm:   # result stored permuted: stride of logical dim k in memory
+            stored = list(contiguous_strides(n.shape))
+            c_str = [stored[list(c_perm).index(k)] for k in range(len(out))]
+        else:
+            c_str = list(contiguous_strides(out))
+        assert c_str[-1] == 1
+        SCM = c_str[-2]
+        c_batch = c_str[:-2]
         a_view, b_view = n.attrs.get("a_view"), n.attrs.get("b_view")
         a_str = a_view[1] if a_view else contiguous_strides(sa)
         b_str = b_view[1] if b_view else contiguous_strides(sb)
@@ -549,19 +558,19 @@ class CodeGen:
         w.open(f"static void {name}({', '.join(params)})")
         w(f"enum {{ M = {M}, N = {N}, K = {K}, MB = {MB}, NB = {NB}, KB = {KB}, "
           f"MR = {MR}, NV = {NV}, NR = {NR}, VW = {vw} }};")
-        w(f"const long SAM = {SAM}L, SAK = {SAK}L, SBK = {SBK}L, SBN = {SBN}L;  "
-          f"/* operand strides (views) */")
+        w(f"const long SAM = {SAM}L, SAK = {SAK}L, SBK = {SBK}L, SBN = {SBN}L, SCM = {SCM}L;  "
+          f"/* operand / result strides (views) */")
         if par:
             # group row blocks per unit so B is packed once per group, keeping
             # >= 2 units per thread where possible
             nib, njb = -(-M // MB), -(-N // NB)
             grp = max(1, (BATCH * nib * njb) // (2 * nthreads))
             grp = min(grp, nib)
-            self._mm_parallel_body(w, BATCH, batch_dims, a_batch, b_batch, ex_strides,
+            self._mm_parallel_body(w, BATCH, batch_dims, a_batch, b_batch, c_batch, ex_strides,
                                    epilogue, nthreads, grp)
             w.close()  # fn
         else:
-            self._mm_serial_body(w, batch_dims, a_batch, b_batch, ex_strides, epilogue)
+            self._mm_serial_body(w, batch_dims, a_batch, b_batch, c_batch, ex_strides, epilogue)
         args = [self.buf(a), self.buf(b), self.buf(n)] + [self.buf(e) for e in extra] + ["scratch"]
         return Kernel(name, w.text(), args, scratch=scratch)
 

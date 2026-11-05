@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tinyfuse"
+version = "0.1.0"
+description = "A small tracing ML compiler that emits fused, tiled C"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.22"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+bench = ["matplotlib", "torch"]
+
+[tool.setuptools]
+packages = ["tinyfuse", "tinyfuse.passes", "tinyfuse.codegen"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

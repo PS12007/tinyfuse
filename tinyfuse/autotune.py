@@ -41,7 +41,7 @@ from .codegen.c_backend import CodegenOptions, MatmulTile, clamp_tile, default_t
 from .ir import Graph
 from .ops import numel
 
-Key = Tuple[int, int, int, int]
+Key = Tuple  # (batch, M, N, K) or (batch, M, N, K, epilogue-signature)
 
 
 def cpu_fingerprint() -> str:
@@ -56,15 +56,29 @@ def cpu_fingerprint() -> str:
     return hashlib.sha1(model.encode()).hexdigest()[:10]
 
 
-def matmul_shapes(g: Graph) -> List[Key]:
-    keys = []
+def node_key(n) -> Key:
+    """Tuning key of a matmul / fused_matmul node.  The epilogue is part of
+    the key because its cost depends on the micro-tile shape."""
+    from .codegen.c_backend import epilogue_signature
+    a, b = n.inputs[0], n.inputs[1]
+    return (numel(n.shape[:-2]), a.shape[-2], b.shape[-1], a.shape[-1],
+            epilogue_signature(n))
+
+
+def matmul_nodes(g: Graph) -> List[Tuple[Key, object]]:
+    """One representative node per distinct tuning key, in graph order."""
+    out, seen = [], set()
     for n in g.nodes:
         if n.op in ("matmul", "fused_matmul"):
-            a, b = n.inputs[0], n.inputs[1]
-            k = (numel(n.shape[:-2]), a.shape[-2], b.shape[-1], a.shape[-1])
-            if k not in keys:
-                keys.append(k)
-    return keys
+            k = node_key(n)
+            if k not in seen:
+                seen.add(k)
+                out.append((k, n))
+    return out
+
+
+def matmul_shapes(g: Graph) -> List[Key]:
+    return [k for k, _ in matmul_nodes(g)]
 
 
 def candidate_tiles(m: int, n: int, k: int, vw: int, max_candidates: int = 32,
@@ -99,34 +113,82 @@ def _time_min(fn, args, reps: int, min_time: float) -> float:
     return best
 
 
-def tune_matmul(batch: int, m: int, n: int, k: int, vw: Optional[int] = None,
-                max_candidates: int = 32, reps: int = 5, min_time: float = 0.05,
-                verbose: bool = False, seed: int = 0) -> Tuple[MatmulTile, float, List[dict]]:
-    """Search tiles for one matmul shape.  Returns (best tile, best GFLOP/s,
-    all results)."""
-    from .compiler import compile as tf_compile
+def _subgraph(node) -> Graph:
+    """A graph containing just ``node`` with fresh inputs for its operands."""
+    from .ir import Node
+    g = Graph("tune")
+    ins = [g.add_input(x.shape, f"in{i}") for i, x in enumerate(node.inputs)]
+    n = Node(node.op, ins, dict(node.attrs))
+    g.nodes.append(n)
+    g.outputs = [n]
+    return g
+
+
+def tune_node(node, vw: Optional[int] = None, max_candidates: int = 32, reps: int = 5,
+              min_time: float = 0.05, confirm_top: int = 4, confirm_time: float = 0.5,
+              min_gain: float = 0.03, verbose: bool = False,
+              seed: int = 0) -> Tuple[MatmulTile, float, List[dict]]:
+    """Search tiles for one matmul / fused_matmul node (with its epilogue).
+
+    Phase 1 screens every candidate (min of a short burst).  Phase 2 re-times
+    the ``confirm_top`` fastest plus the default *interleaved* (one call each
+    per round, median over rounds), so slow drifts in machine load cannot
+    decide the winner, and keeps the default unless a challenger beats it by
+    more than ``min_gain``.  Returns (best tile, GFLOP/s, phase-1 results);
+    ``results[0]`` is always the default tile."""
+    from .compiler import compile_graph
+    from .interpreter import run_graph
     from .runtime import native_vector_width
     vw = vw or native_vector_width()
-    sa = (batch, m, k) if batch > 1 else (m, k)
-    sb = (batch, k, n) if batch > 1 else (k, n)
+    batch, m, n, k = node_key(node)[:4]
+    g = _subgraph(node)
     rng = np.random.default_rng(0)
-    a = rng.standard_normal(sa).astype(np.float32)
-    b = rng.standard_normal(sb).astype(np.float32)
-    ref = np.matmul(a, b)
+    xs = [rng.standard_normal(i.shape).astype(np.float32) for i in g.inputs]
+    ref = run_graph(g, xs)[0]
     flops = 2.0 * batch * m * n * k
-    results = []
+    results, fns = [], {}
     for t in candidate_tiles(m, n, k, vw, max_candidates, seed):
-        f = tf_compile(lambda x, y: x @ y, sa, sb,
-                       options=CodegenOptions(vector_width=vw, default_tile=t))
-        out = f(a, b)
-        if not np.allclose(out, ref, rtol=1e-3, atol=1e-3):   # never pick a broken kernel
+        f = compile_graph(g, "none", CodegenOptions(vector_width=vw, default_tile=t))
+        if not np.allclose(f(*xs), ref, rtol=1e-3, atol=1e-3):  # never pick a broken kernel
             raise AssertionError(f"tile {t} gives wrong results")
-        s = _time_min(f, (a, b), reps, min_time)
+        s = _time_min(f, xs, reps, min_time)
         results.append({"tile": list(t.key()), "seconds": s, "gflops": flops / s / 1e9})
+        fns[t] = f
         if verbose:
             print(f"    {t.key()}: {flops / s / 1e9:7.1f} GFLOP/s")
-    best = max(results, key=lambda r: r["gflops"])
-    return MatmulTile(*best["tile"]), best["gflops"], results
+    default = MatmulTile(*results[0]["tile"])
+    ranked = sorted(results[1:], key=lambda r: r["seconds"])[:confirm_top]
+    finalists = [default] + [MatmulTile(*r["tile"]) for r in ranked]
+    times = {t: [] for t in finalists}
+    t_end = time.perf_counter() + confirm_time
+    rounds = 0
+    while rounds < 5 or (time.perf_counter() < t_end and rounds < 2000):
+        for t in finalists:
+            t0 = time.perf_counter()
+            fns[t](*xs)
+            times[t].append(time.perf_counter() - t0)
+        rounds += 1
+    med = {t: float(np.median(v)) for t, v in times.items()}
+    best = min(med, key=med.get)
+    if med[best] > med[default] * (1 - min_gain):
+        best = default
+    if verbose:
+        print(f"    confirm ({rounds} rounds): " + ", ".join(
+            f"{t.key()}={flops / med[t] / 1e9:.1f}" for t in finalists))
+    for r in results:
+        t = MatmulTile(*r["tile"])
+        if t in med:
+            r["confirm_gflops"] = flops / med[t] / 1e9
+    return best, flops / med[best] / 1e9, results
+
+
+def tune_matmul(batch: int, m: int, n: int, k: int, **kw):
+    """Tune a plain (epilogue-free) matmul of the given shape."""
+    from . import frontend as F
+    sa = (batch, m, k) if batch > 1 else (m, k)
+    sb = (batch, k, n) if batch > 1 else (k, n)
+    g = F.trace(lambda x, y: x @ y, sa, sb)
+    return tune_node(g.outputs[0], **kw)
 
 
 class TuningDB:
@@ -140,8 +202,9 @@ class TuningDB:
 
     @staticmethod
     def key(shape: Key, vw: int) -> str:
-        b, m, n, k = shape
-        return f"cpu={cpu_fingerprint()},vw={vw},b={b},m={m},n={n},k={k}"
+        b, m, n, k = shape[:4]
+        epi = shape[4] if len(shape) > 4 else ""
+        return f"cpu={cpu_fingerprint()},vw={vw},b={b},m={m},n={n},k={k},epilogue={epi}"
 
     def get(self, shape: Key, vw: int) -> Optional[MatmulTile]:
         e = self.entries.get(self.key(shape, vw))
@@ -150,7 +213,8 @@ class TuningDB:
     def record(self, shape: Key, vw: int, tile: MatmulTile, gflops: float,
                default_gflops: float, n_candidates: int):
         self.entries[self.key(shape, vw)] = {
-            "shape": {"batch": shape[0], "m": shape[1], "n": shape[2], "k": shape[3]},
+            "shape": {"batch": shape[0], "m": shape[1], "n": shape[2], "k": shape[3],
+                      "epilogue": shape[4] if len(shape) > 4 else ""},
             "tile": list(tile.key()), "tile_names": ["mb", "nb", "kb", "mr", "nv"],
             "gflops": round(gflops, 2), "default_gflops": round(default_gflops, 2),
             "candidates": n_candidates,
@@ -171,23 +235,37 @@ class TuningDB:
 
     def tune(self, shapes: Iterable[Key], vw: Optional[int] = None, retune: bool = False,
              verbose: bool = False, **kw) -> "TuningDB":
+        """Tune plain matmuls of the given (batch, M, N, K) shapes."""
+        from . import frontend as F
+        items = []
+        for s in shapes:
+            b, m, n, k = s[:4]
+            sa = (b, m, k) if b > 1 else (m, k)
+            sb = (b, k, n) if b > 1 else (k, n)
+            node = F.trace(lambda x, y: x @ y, sa, sb).outputs[0]
+            items.append((node_key(node), node))
+        return self._tune_nodes(items, vw, retune, verbose, **kw)
+
+    def _tune_nodes(self, items, vw=None, retune=False, verbose=False, **kw) -> "TuningDB":
         from .runtime import native_vector_width
         vw = vw or native_vector_width()
-        for s in shapes:
+        for s, node in items:
             if not retune and self.get(s, vw) is not None:
                 continue
             if verbose:
-                print(f"tuning matmul batch={s[0]} M={s[1]} N={s[2]} K={s[3]}")
-            tile, gf, res = tune_matmul(*s, vw=vw, verbose=verbose, **kw)
-            self.record(s, vw, tile, gf, res[0]["gflops"], len(res))
+                print(f"tuning {node.op} batch={s[0]} M={s[1]} N={s[2]} K={s[3]} "
+                      f"epilogue=[{s[4]}]")
+            tile, gf, res = tune_node(node, vw=vw, verbose=verbose, **kw)
+            default_gf = res[0].get("confirm_gflops", res[0]["gflops"])
+            self.record(s, vw, tile, gf, default_gf, len(res))
             if verbose:
-                print(f"  best {tile.key()} {gf:.1f} GFLOP/s (default {res[0]['gflops']:.1f})")
+                print(f"  best {tile.key()} {gf:.1f} GFLOP/s (default {default_gf:.1f})")
             self.save()
         return self
 
     def tune_graph(self, g: Graph, **kw) -> "TuningDB":
         from .passes import optimize
-        return self.tune(matmul_shapes(optimize(g, "fused")), **kw)
+        return self._tune_nodes(matmul_nodes(optimize(g, "fused")), **kw)
 
 
 def _parse_shape(s: str) -> Key:

@@ -39,7 +39,8 @@ def compile_graph(g: Graph, pipeline: str = "fused", options: Optional[CodegenOp
     if tuning is not None:
         tiles = dict(options.tiles)
         for shape, tile in tuning.tiles_for(opt, options).items():
-            tiles.setdefault(shape, tile)   # explicit per-shape tiles win
+            if shape not in tiles and shape[:4] not in tiles:   # explicit tiles win
+                tiles[shape] = tile
         options = dataclasses.replace(options, tiles=tiles)
     gen = generate_c(opt, options)
     return CompiledFunction(g, opt, CompiledModule(gen, parallel=options.parallel))

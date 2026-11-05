@@ -48,13 +48,13 @@ class MatmulTile:
 class CodegenOptions:
     vector_width: int = 16          # floats per SIMD register (16 = AVX-512)
     default_tile: Optional[MatmulTile] = None
-    # (batch, M, N, K) -> MatmulTile; consulted before default_tile
+    # (batch, M, N, K[, epilogue signature]) -> MatmulTile; consulted before default_tile
     tiles: Dict[Tuple[int, int, int, int], MatmulTile] = field(default_factory=dict)
     parallel: bool = False          # OpenMP parallel loops
     profile: bool = False           # time every kernel call (see CompiledModule.profile)
 
-    def tile_for(self, batch, m, n, k) -> MatmulTile:
-        t = self.tiles.get((batch, m, n, k))
+    def tile_for(self, batch, m, n, k, epilogue: str = "") -> MatmulTile:
+        t = self.tiles.get((batch, m, n, k, epilogue)) or self.tiles.get((batch, m, n, k))
         if t is None:
             t = self.default_tile or default_tile_for(self.vector_width)
         return t
@@ -66,6 +66,13 @@ def default_tile_for(vw: int) -> MatmulTile:
     if vw == 8:   # AVX2: 6x2 ymm accumulators = 12 of 16 registers
         return MatmulTile(mb=96, nb=256, kb=256, mr=6, nv=2)
     return MatmulTile(mb=64, nb=128, kb=256, mr=4, nv=2)
+
+
+def epilogue_signature(n: Node) -> str:
+    """Text form of a matmul node's epilogue ("" if none); part of tuning keys."""
+    from ..ir import format_program
+    ep = n.attrs.get("epilogue") if n.op == "fused_matmul" else None
+    return format_program(ep) if ep else ""
 
 
 def clamp_tile(t: MatmulTile, m: int, n: int, k: int, vw: int) -> MatmulTile:
@@ -283,7 +290,7 @@ class CodeGen:
         BATCH = numel(batch_dims)
         b_stride = K * N if len(b.shape) > 2 else 0
         vw = self.vw
-        t = clamp_tile(self.opts.tile_for(BATCH, M, N, K), M, N, K, vw)
+        t = clamp_tile(self.opts.tile_for(BATCH, M, N, K, epilogue_signature(n)), M, N, K, vw)
         MB, NB, KB, MR, NV = t.key()
         NR = NV * vw
         scratch = KB * NB + MB * KB

@@ -22,8 +22,10 @@ def test_candidates_respect_register_budget_and_problem_size():
 
 
 def test_tune_matmul_picks_fastest_correct_tile():
-    tile, gf, res = tune_matmul(1, 20, 33, 17, max_candidates=4, reps=2, min_time=0.0)
-    assert len(res) == 4 and gf == max(r["gflops"] for r in res)
+    tile, gf, res = tune_matmul(1, 20, 33, 17, max_candidates=4, reps=2, min_time=0.0,
+                                 confirm_time=0.0)
+    assert len(res) == 4 and gf > 0
+    assert "confirm_gflops" in res[0]   # the default is always a finalist
     assert isinstance(tile, MatmulTile)
 
 
@@ -31,9 +33,10 @@ def test_db_roundtrip_and_compile_uses_tiles(tmp_path):
     path = tmp_path / "t.json"
     sh = mlp2_shapes(8, 16, 24, 4)
     g = tf.trace(mlp2, **sh)
-    db = TuningDB(path).tune_graph(g, max_candidates=3, reps=1, min_time=0.0)
+    db = TuningDB(path).tune_graph(g, max_candidates=3, reps=1, min_time=0.0, confirm_time=0.0)
     keys = matmul_shapes(tf.optimize(g))
-    assert keys == [(1, 8, 24, 16), (1, 8, 4, 24)]
+    assert keys == [(1, 8, 24, 16, "t0=add(acc,in0); t1=relu(t0)"),
+                    (1, 8, 4, 24, "t0=add(acc,in0)")]
     data = json.loads(path.read_text())
     assert len(data) == 2
     db2 = TuningDB(path)
@@ -47,10 +50,10 @@ def test_db_roundtrip_and_compile_uses_tiles(tmp_path):
     assert_close(f(*xs), np_mlp2(*[x.astype(np.float64) for x in xs]))
     # explicit per-shape tile overrides the database; caller's options not mutated
     forced = MatmulTile(6, VW, 4, 3, 1)
-    opts = CodegenOptions(vector_width=VW, tiles={keys[0]: forced})
+    opts = CodegenOptions(vector_width=VW, tiles={keys[0][:4]: forced})
     f2 = tf.compile(mlp2, tuning=db2, options=opts, **sh)
     assert f"mb=6 nb={VW} kb=4 mr=3" in f2.source
-    assert list(opts.tiles) == [keys[0]]
+    assert list(opts.tiles) == [keys[0][:4]]
 
 
 def test_cli(tmp_path, capsys):
